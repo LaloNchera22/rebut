@@ -1,5 +1,6 @@
 [package]
 name = "verifier-fabric"
+description = "Execution fabric: Firecracker microVM executor, snapshot cache, host side of the guest protocol."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,3 +8,20 @@ rust-version.workspace = true
 
 [dependencies]
 verifier-core.workspace = true
+# Only the library (protocol, archive, runner); the vsock listener is
+# guest-only. A path dep because a workspace dep cannot turn defaults off.
+verifier-guest = { path = "../guest", default-features = false }
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tempfile.workspace = true
+libc = "0.2"
+
+[dev-dependencies]
+uuid.workspace = true
+tracing-subscriber.workspace = true
