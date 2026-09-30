@@ -64,3 +64,6 @@ clap = { version = "4", features = ["derive", "env"] }
 syn = { version = "2", features = ["full", "visit", "extra-traits"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 tempfile = "3"
+# BBS signatures, blind issuance and pseudonyms (IETF CFRG drafts), ADR-8.
+# Pinned exactly: a crypto dependency is upgraded on purpose, not by `cargo update`.
+zkryptium = { version = "=0.7.1", default-features = false, features = ["bbsplus", "bbsplus_blind", "bbsplus_nym"] }

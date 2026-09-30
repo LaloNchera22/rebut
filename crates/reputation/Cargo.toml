@@ -1,6 +1,6 @@
 [package]
 name = "verifier-reputation"
-description = "Phase 3: trust graph of verified merges keyed by receipt digests; anonymous-credential interface (ADR-8)."
+description = "Phase 3: trust graph of verified merges keyed by receipt digests; BBS anonymous credentials with scoped nullifiers (ADR-8)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +10,7 @@ rust-version.workspace = true
 verifier-core.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
+zkryptium.workspace = true
 serde_json.workspace = true
+hex.workspace = true
+sha2.workspace = true
