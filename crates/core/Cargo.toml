@@ -1,10 +1,11 @@
 [package]
-name = "verifier-core"
+name = "rebut-core"
 description = "Shared types, intent manifest, seeds, findings and the execution contract."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true

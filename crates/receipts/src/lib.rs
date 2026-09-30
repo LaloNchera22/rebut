@@ -8,7 +8,7 @@
 //!
 //! **You must trust the operator's signing key.** A receipt proves that the
 //! holder of that key attested to the verdict and that the attestation was
-//! logged; it does not prove the verifier actually ran as described. Phase 2
+//! logged; it does not prove the Rebut actually ran as described. Phase 2
 //! moves the [`Signer`] into a TEE so the signature additionally attests to
 //! the code that produced it. The [`Signer`] trait is the seam for that move.
 //!
@@ -35,7 +35,7 @@ pub use statement::{
 
 /// Build, sign and wrap a statement for `verdict` in one call.
 pub async fn sign_verdict(
-    verdict: &verifier_core::Verdict,
+    verdict: &rebut_core::Verdict,
     ctx: &ReceiptContext,
     signer: &dyn Signer,
 ) -> anyhow::Result<Envelope> {

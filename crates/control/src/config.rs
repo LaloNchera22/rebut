@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Debug, Clone, Parser)]
-#[command(name = "verifier-control", about = "rebut control plane", version)]
+#[command(name = "rebut-control", about = "rebut control plane", version)]
 pub struct Config {
     #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
     pub database_url: String,
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn parses_flags_with_defaults() {
         let c = Config::try_parse_from([
-            "verifier-control",
+            "rebut-control",
             "--database-url=postgres://x",
             "--github-webhook-secret=s",
             "--github-app-id=42",

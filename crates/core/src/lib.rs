@@ -1,4 +1,4 @@
-//! Shared vocabulary of the verifier.
+//! Shared vocabulary of Rebut.
 //!
 //! Every other crate speaks in these types. Two rules are encoded here and
 //! nowhere else, so they cannot drift:

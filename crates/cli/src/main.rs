@@ -4,19 +4,17 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use verifier_challenges::drand::QUICKNET_CHAIN_HASH;
-use verifier_challenges::DrandClient;
-use verifier_cli::audit::parse_public_key;
-use verifier_cli::local::LocalRun;
-use verifier_cli::{
-    derive_seed, regenerate_challenges, verify_local, verify_receipt, LocalOptions,
-};
-use verifier_core::{CommitSha, DrandBeacon, EngineKind, Seed, VerdictStatus, Visibility};
-use verifier_receipts::{Envelope, LogEntry};
+use rebut::audit::parse_public_key;
+use rebut::local::LocalRun;
+use rebut::{derive_seed, regenerate_challenges, verify_local, verify_receipt, LocalOptions};
+use rebut_challenges::drand::QUICKNET_CHAIN_HASH;
+use rebut_challenges::DrandClient;
+use rebut_core::{CommitSha, DrandBeacon, EngineKind, Seed, VerdictStatus, Visibility};
+use rebut_receipts::{Envelope, LogEntry};
 
 #[derive(Parser)]
 #[command(
-    name = "verifier",
+    name = "rebut",
     version,
     about = "Verify pull requests: locally, and audit the service"
 )]
@@ -85,7 +83,7 @@ enum ChallengesCmd {
     Regenerate {
         #[command(flatten)]
         seed: SeedArgs,
-        /// The base branch's `.verifier/challenges.toml`.
+        /// The base branch's `.rebut/challenges.toml`.
         #[arg(long)]
         spec: PathBuf,
         /// Cap the cases printed per challenge.
@@ -127,7 +125,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &PathBuf) -> anyhow::Result<T
     serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))
 }
 
-async fn seed_info(args: &SeedArgs) -> anyhow::Result<verifier_cli::SeedInfo> {
+async fn seed_info(args: &SeedArgs) -> anyhow::Result<rebut::SeedInfo> {
     let commit = CommitSha::new(&args.commit).map_err(anyhow::Error::msg)?;
     let beacon: Option<DrandBeacon> = args.beacon.as_ref().map(read_json).transpose()?;
     let client = drand_client(args.drand_url.as_deref())?;
@@ -226,7 +224,7 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             let beacon = if offline {
                 None
             } else {
-                Some(Arc::new(drand_client(None)?) as Arc<dyn verifier_challenges::BeaconSource>)
+                Some(Arc::new(drand_client(None)?) as Arc<dyn rebut_challenges::BeaconSource>)
             };
             let run = verify_local(
                 &repo,
@@ -268,9 +266,8 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                 },
         } => {
             let info = seed_info(&seed).await?;
-            let seed = Seed(
-                verifier_core::Digest::try_from(info.seed.clone()).map_err(anyhow::Error::msg)?,
-            );
+            let seed =
+                Seed(rebut_core::Digest::try_from(info.seed.clone()).map_err(anyhow::Error::msg)?);
             let toml = std::fs::read_to_string(&spec)
                 .with_context(|| format!("reading {}", spec.display()))?;
             let out = serde_json::json!({
@@ -303,7 +300,7 @@ async fn main() -> ExitCode {
         .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn,verifier_fabric::local=error".into()),
+                .unwrap_or_else(|_| "warn,rebut_fabric::local=error".into()),
         )
         .init();
     match run(Cli::parse()).await {

@@ -1,4 +1,4 @@
-//! `verifier verify`: the public checks, run locally on your own branch.
+//! `rebut verify`: the public checks, run locally on your own branch.
 //!
 //! This uses [`LocalProcessExecutor`], which builds and runs code directly on
 //! this machine without a sandbox. That is the same trust you already give
@@ -11,15 +11,15 @@ use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
-use serde::Serialize;
-use verifier_challenges::drand::{self, BeaconSource};
-use verifier_challenges::ChallengesEngine;
-use verifier_core::{
+use rebut_challenges::drand::{self, BeaconSource};
+use rebut_challenges::ChallengesEngine;
+use rebut_core::{
     CommitSha, Digest, DrandBeacon, Engine, EngineContext, EngineKind, ExecutionRequest, Finding,
     ImpactPlan, IntentManifest, Policy, PullRequest, RepoId, Seed, Verdict, GENERATOR_VERSION,
 };
-use verifier_differential::DifferentialEngine;
-use verifier_fabric::{LocalProcessExecutor, SourceProvider};
+use rebut_differential::DifferentialEngine;
+use rebut_fabric::{LocalProcessExecutor, SourceProvider};
+use serde::Serialize;
 
 pub struct LocalOptions {
     /// Branch or commit to compare against; the merge base with `HEAD` is used.
@@ -59,7 +59,7 @@ impl SourceProvider for MapSource {
             .with_context(|| format!("no local tree for commit {}", req.commit))?
             .clone();
         Ok(
-            tokio::task::spawn_blocking(move || verifier_guest::archive::pack_directory(&dir))
+            tokio::task::spawn_blocking(move || rebut_guest::archive::pack_directory(&dir))
                 .await??,
         )
     }
@@ -101,9 +101,8 @@ pub async fn verify_local(repo: &Path, opts: LocalOptions) -> anyhow::Result<Loc
     let dirty = !git(&root, &["status", "--porcelain"])?.is_empty();
     let head_sha = if dirty {
         let dir = root.clone();
-        let tgz =
-            tokio::task::spawn_blocking(move || verifier_guest::archive::pack_directory(&dir))
-                .await??;
+        let tgz = tokio::task::spawn_blocking(move || rebut_guest::archive::pack_directory(&dir))
+            .await??;
         CommitSha::new(&Digest::of(&tgz).to_hex()[..40]).map_err(anyhow::Error::msg)?
     } else {
         CommitSha::new(git_str(&root, &["rev-parse", "HEAD"])?).map_err(anyhow::Error::msg)?
@@ -115,12 +114,12 @@ pub async fn verify_local(repo: &Path, opts: LocalOptions) -> anyhow::Result<Loc
     tar::Archive::new(&tar[..]).unpack(base_dir.path())?;
 
     // Policy from the base, intent from the head: same rule as the service.
-    let policy = match read_opt(&base_dir.path().join(".verifier/policy.toml"))? {
-        Some(s) => Policy::from_toml(&s).context("parsing base .verifier/policy.toml")?,
+    let policy = match read_opt(&base_dir.path().join(".rebut/policy.toml"))? {
+        Some(s) => Policy::from_toml(&s).context("parsing base .rebut/policy.toml")?,
         None => Policy::default(),
     };
-    let intent = match read_opt(&root.join(".verifier/intent.toml"))? {
-        Some(s) => IntentManifest::from_toml(&s).context("parsing .verifier/intent.toml")?,
+    let intent = match read_opt(&root.join(".rebut/intent.toml"))? {
+        Some(s) => IntentManifest::from_toml(&s).context("parsing .rebut/intent.toml")?,
         None => IntentManifest::default(),
     };
 
@@ -144,7 +143,7 @@ pub async fn verify_local(repo: &Path, opts: LocalOptions) -> anyhow::Result<Loc
 
     let plan = {
         let (b, h) = (base_dir.path().to_path_buf(), root.clone());
-        tokio::task::spawn_blocking(move || verifier_planner::plan(&b, &h)).await??
+        tokio::task::spawn_blocking(move || rebut_planner::plan(&b, &h)).await??
     };
 
     let url = format!("file://{}", root.display());
@@ -235,7 +234,7 @@ pub async fn verify_local(repo: &Path, opts: LocalOptions) -> anyhow::Result<Loc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use verifier_core::VerdictStatus;
+    use rebut_core::VerdictStatus;
 
     fn run_git(dir: &Path, args: &[&str]) {
         let out = Command::new("git")
@@ -297,7 +296,7 @@ mod tests {
             "pub fn clamp_add(a: u8, b: u8) -> u8 { a.wrapping_add(b) }\n\n\
              #[cfg(test)]\nmod tests {\n    #[test]\n    fn small() { assert_eq!(super::clamp_add(1, 2), 3); }\n}\n",
         );
-        write(d, ".verifier/intent.toml", "kind = \"refactor\"\n");
+        write(d, ".rebut/intent.toml", "kind = \"refactor\"\n");
         run_git(d, &["add", "."]);
         run_git(d, &["commit", "-q", "-m", "refactor"]);
 

@@ -3,12 +3,12 @@
 use anyhow::{bail, Context};
 use base64::Engine as _;
 use ed25519_dalek::VerifyingKey;
+use rebut_challenges::drand::{self, BeaconSource};
+use rebut_challenges::spec;
+use rebut_core::{CommitSha, DrandBeacon, Seed, GENERATOR_VERSION};
+use rebut_differential::harness::encode_case;
+use rebut_receipts::{verify_envelope, Envelope, LogEntry, Statement};
 use serde::Serialize;
-use verifier_challenges::drand::{self, BeaconSource};
-use verifier_challenges::spec;
-use verifier_core::{CommitSha, DrandBeacon, Seed, GENERATOR_VERSION};
-use verifier_differential::harness::encode_case;
-use verifier_receipts::{verify_envelope, Envelope, LogEntry, Statement};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SeedInfo {
@@ -52,7 +52,7 @@ pub struct RegeneratedChallenge {
 }
 
 /// Regenerates the public challenges for a seed. Anyone holding the seed and
-/// the base branch's `.verifier/challenges.toml` gets the same inputs.
+/// the base branch's `.rebut/challenges.toml` gets the same inputs.
 pub fn regenerate_challenges(
     spec_toml: &str,
     seed: &Seed,
@@ -127,9 +127,9 @@ pub fn verify_receipt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rebut_challenges::FixedBeacon;
+    use rebut_receipts::{Ed25519Signer, InMemoryLog, Signer, TransparencyLog};
     use std::sync::Arc;
-    use verifier_challenges::FixedBeacon;
-    use verifier_receipts::{Ed25519Signer, InMemoryLog, Signer, TransparencyLog};
 
     const SPEC: &str = r#"
 [[challenge]]
@@ -142,8 +142,8 @@ oracle = { kind = "no_panic" }
 
     #[test]
     fn regeneration_is_deterministic_and_seed_sensitive() {
-        let s1 = Seed(verifier_core::Digest::of(b"1"));
-        let s2 = Seed(verifier_core::Digest::of(b"2"));
+        let s1 = Seed(rebut_core::Digest::of(b"1"));
+        let s2 = Seed(rebut_core::Digest::of(b"2"));
         let a = regenerate_challenges(SPEC, &s1, None).unwrap();
         assert_eq!(a[0].cases.len(), 5);
         assert_eq!(
@@ -176,11 +176,11 @@ oracle = { kind = "no_panic" }
         assert!(derive_seed(&commit, 8, Some(beacon), &src).await.is_err());
     }
 
-    fn verdict() -> verifier_core::Verdict {
+    fn verdict() -> rebut_core::Verdict {
         let sha = CommitSha::new("d".repeat(40)).unwrap();
-        verifier_core::Verdict {
-            pr: verifier_core::PullRequest {
-                repo: verifier_core::RepoId {
+        rebut_core::Verdict {
+            pr: rebut_core::PullRequest {
+                repo: rebut_core::RepoId {
                     owner: "o".into(),
                     name: "r".into(),
                 },
@@ -196,21 +196,21 @@ oracle = { kind = "no_panic" }
             engines_run: vec![],
             findings: vec![],
             inconclusive_reason: None,
-            mode: verifier_core::EnforcementMode::Mark,
+            mode: rebut_core::EnforcementMode::Mark,
         }
     }
 
     #[tokio::test]
     async fn receipt_and_log_entry_verify_and_tampering_fails() {
         let signer: Arc<dyn Signer> = Arc::new(Ed25519Signer::generate());
-        let ctx = verifier_receipts::ReceiptContext {
-            policy_digest: verifier_core::Digest::of(b"policy"),
+        let ctx = rebut_receipts::ReceiptContext {
+            policy_digest: rebut_core::Digest::of(b"policy"),
             environment_digests: vec![],
             beacon: None,
             generator_version: GENERATOR_VERSION.into(),
-            verifier_version: "test".into(),
+            rebut_version: "test".into(),
         };
-        let env = verifier_receipts::sign_verdict(&verdict(), &ctx, signer.as_ref())
+        let env = rebut_receipts::sign_verdict(&verdict(), &ctx, signer.as_ref())
             .await
             .unwrap();
         let log = InMemoryLog::new(signer.clone());

@@ -5,20 +5,20 @@
 //!   as root (the jailer needs it);
 //! * `jailer` and `firecracker` binaries;
 //! * an uncompressed guest kernel and an ext4 rootfs built to the contract in
-//!   `verifier_fabric::firecracker` (toolchain + `verifier-guest` agent);
-//! * environment: `VERIFIER_FC_JAILER`, `VERIFIER_FC_FIRECRACKER`,
-//!   `VERIFIER_FC_KERNEL`, `VERIFIER_FC_ROOTFS`, `VERIFIER_FC_CHROOT_BASE`,
-//!   and `VERIFIER_FC_UID`/`VERIFIER_FC_GID` for the unprivileged user.
+//!   `rebut_fabric::firecracker` (toolchain + `rebut-guest` agent);
+//! * environment: `REBUT_FC_JAILER`, `REBUT_FC_FIRECRACKER`,
+//!   `REBUT_FC_KERNEL`, `REBUT_FC_ROOTFS`, `REBUT_FC_CHROOT_BASE`,
+//!   and `REBUT_FC_UID`/`REBUT_FC_GID` for the unprivileged user.
 //!
-//! Run with `cargo test -p verifier-fabric --test firecracker_vm -- --ignored`.
+//! Run with `cargo test -p rebut-fabric --test firecracker_vm -- --ignored`.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use verifier_core::{CommitSha, ExecutionRequest, Executor, Step};
-use verifier_fabric::firecracker::jailer::JailerConfig;
-use verifier_fabric::firecracker::vmconfig::DEFAULT_BOOT_ARGS;
-use verifier_fabric::{FirecrackerConfig, FirecrackerExecutor, TarballSource};
+use rebut_core::{CommitSha, ExecutionRequest, Executor, Step};
+use rebut_fabric::firecracker::jailer::JailerConfig;
+use rebut_fabric::firecracker::vmconfig::DEFAULT_BOOT_ARGS;
+use rebut_fabric::{FirecrackerConfig, FirecrackerExecutor, TarballSource};
 
 fn env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
@@ -40,20 +40,20 @@ async fn runs_a_step_in_a_microvm() {
     )
     .unwrap();
     std::fs::write(src.path().join("src/lib.rs"), "#[test]\nfn ok() {}\n").unwrap();
-    let tgz = verifier_guest::archive::pack_directory(src.path()).unwrap();
+    let tgz = rebut_guest::archive::pack_directory(src.path()).unwrap();
 
     let config = FirecrackerConfig {
         jailer: JailerConfig {
-            jailer_bin: env("VERIFIER_FC_JAILER").into(),
-            firecracker_bin: env("VERIFIER_FC_FIRECRACKER").into(),
-            uid: env("VERIFIER_FC_UID").parse().unwrap(),
-            gid: env("VERIFIER_FC_GID").parse().unwrap(),
-            chroot_base: env("VERIFIER_FC_CHROOT_BASE").into(),
+            jailer_bin: env("REBUT_FC_JAILER").into(),
+            firecracker_bin: env("REBUT_FC_FIRECRACKER").into(),
+            uid: env("REBUT_FC_UID").parse().unwrap(),
+            gid: env("REBUT_FC_GID").parse().unwrap(),
+            chroot_base: env("REBUT_FC_CHROOT_BASE").into(),
             cgroup_root: "/sys/fs/cgroup/firecracker".into(),
             seccomp_filter: None,
         },
-        kernel: env("VERIFIER_FC_KERNEL").into(),
-        rootfs: env("VERIFIER_FC_ROOTFS").into(),
+        kernel: env("REBUT_FC_KERNEL").into(),
+        rootfs: env("REBUT_FC_ROOTFS").into(),
         boot_args: DEFAULT_BOOT_ARGS.into(),
         scratch_mib: 2048,
         toolchain: "baked".into(),

@@ -1541,6 +1541,267 @@ dependencies = [
 ]
 
 [[package]]
+name = "rebut"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "clap",
+ "ed25519-dalek",
+ "hex",
+ "rebut-challenges",
+ "rebut-core",
+ "rebut-differential",
+ "rebut-fabric",
+ "rebut-guest",
+ "rebut-planner",
+ "rebut-receipts",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rebut-adversary"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "hex",
+ "rebut-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "rebut-challenges"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hex",
+ "rebut-core",
+ "rebut-differential",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.119",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "rebut-control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "clap",
+ "hex",
+ "hmac",
+ "jsonwebtoken",
+ "rebut-challenges",
+ "rebut-core",
+ "rebut-differential",
+ "rebut-fabric",
+ "rebut-guest",
+ "rebut-planner",
+ "rebut-receipts",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "subtle",
+ "tempfile",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "rebut-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "time",
+ "toml",
+ "uuid",
+]
+
+[[package]]
+name = "rebut-differential"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hex",
+ "rand_chacha",
+ "rebut-core",
+ "syn 2.0.119",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "rebut-fabric"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "libc",
+ "rebut-core",
+ "rebut-guest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "rebut-formal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "rebut-core",
+ "syn 2.0.119",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "rebut-guest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "flate2",
+ "libc",
+ "rebut-core",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-vsock",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "rebut-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rebut",
+ "rebut-challenges",
+ "rebut-core",
+ "rebut-receipts",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rebut-mutation"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "rebut-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "rebut-planner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "rebut-core",
+ "serde",
+ "syn 2.0.119",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "rebut-receipts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "hex",
+ "rand 0.8.8",
+ "rebut-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "rebut-reputation"
+version = "0.1.0"
+dependencies = [
+ "rebut-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2612,267 +2873,6 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "verifier-adversary"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "hex",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
- "verifier-core",
-]
-
-[[package]]
-name = "verifier-challenges"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "hex",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "syn 2.0.119",
- "tempfile",
- "thiserror",
- "tokio",
- "toml",
- "verifier-core",
- "verifier-differential",
-]
-
-[[package]]
-name = "verifier-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "clap",
- "ed25519-dalek",
- "hex",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "verifier-challenges",
- "verifier-core",
- "verifier-differential",
- "verifier-fabric",
- "verifier-guest",
- "verifier-planner",
- "verifier-receipts",
-]
-
-[[package]]
-name = "verifier-control"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "clap",
- "hex",
- "hmac",
- "jsonwebtoken",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "subtle",
- "tempfile",
- "time",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "verifier-challenges",
- "verifier-core",
- "verifier-differential",
- "verifier-fabric",
- "verifier-guest",
- "verifier-planner",
- "verifier-receipts",
-]
-
-[[package]]
-name = "verifier-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "hex",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "time",
- "toml",
- "uuid",
-]
-
-[[package]]
-name = "verifier-differential"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "hex",
- "rand_chacha",
- "syn 2.0.119",
- "tempfile",
- "tokio",
- "uuid",
- "verifier-core",
-]
-
-[[package]]
-name = "verifier-fabric"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "libc",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "verifier-core",
- "verifier-guest",
-]
-
-[[package]]
-name = "verifier-formal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "syn 2.0.119",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
- "verifier-core",
-]
-
-[[package]]
-name = "verifier-guest"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "clap",
- "flate2",
- "libc",
- "serde",
- "serde_json",
- "tar",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-vsock",
- "toml",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "verifier-core",
-]
-
-[[package]]
-name = "verifier-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "verifier-challenges",
- "verifier-cli",
- "verifier-core",
- "verifier-receipts",
-]
-
-[[package]]
-name = "verifier-mutation"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "verifier-core",
-]
-
-[[package]]
-name = "verifier-planner"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "proc-macro2",
- "quote",
- "serde",
- "syn 2.0.119",
- "tempfile",
- "toml",
- "verifier-core",
-]
-
-[[package]]
-name = "verifier-receipts"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "ed25519-dalek",
- "hex",
- "rand 0.8.8",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "time",
- "tokio",
- "uuid",
- "verifier-core",
-]
-
-[[package]]
-name = "verifier-reputation"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror",
- "verifier-core",
-]
 
 [[package]]
 name = "version_check"

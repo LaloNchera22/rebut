@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+use rebut_core::{ExecutionRequest, Step, StepOutcome};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use verifier_core::{ExecutionRequest, Step, StepOutcome};
 
 /// Maximum bytes kept from each of stdout and stderr per step.
 pub const OUTPUT_CAP: usize = 1024 * 1024;
@@ -100,7 +100,7 @@ impl<'a> Runner<'a> {
                 outcome.stdout = c.stdout;
                 outcome.stderr = c.stderr;
             }
-            Err(msg) => outcome.stderr = format!("verifier-guest: {msg}\n").into_bytes(),
+            Err(msg) => outcome.stderr = format!("rebut-guest: {msg}\n").into_bytes(),
         }
         outcome.duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         outcome
@@ -144,7 +144,7 @@ impl<'a> Runner<'a> {
         }
     }
 
-    /// Creates `target/verifier-harness/<name>`: a standalone binary crate
+    /// Creates `target/rebut-harness/<name>`: a standalone binary crate
     /// whose only dependency is the crate under test, by path.
     fn write_harness(&self, name: &str, source: &str) -> Result<PathBuf, String> {
         if !is_ident(name) {
@@ -153,11 +153,11 @@ impl<'a> Runner<'a> {
         let manifest = std::fs::read_to_string(self.workdir.join("Cargo.toml"))
             .map_err(|e| format!("reading Cargo.toml: {e}"))?;
         let krate = package_name(&manifest)?;
-        let dir = self.workdir.join("target/verifier-harness").join(name);
+        let dir = self.workdir.join("target/rebut-harness").join(name);
         let io = |e: std::io::Error| format!("writing harness: {e}");
         std::fs::create_dir_all(dir.join("src")).map_err(io)?;
         let harness_manifest = format!(
-            "[package]\nname = \"verifier-harness-{name}\"\nversion = \"0.0.0\"\n\
+            "[package]\nname = \"rebut-harness-{name}\"\nversion = \"0.0.0\"\n\
              edition = \"2021\"\npublish = false\n\n[dependencies]\n{krate} = {{ path = {} }}\n\n\
              [workspace]\n",
             toml_string(&self.workdir.to_string_lossy()),
@@ -233,7 +233,7 @@ async fn run_command(mut cmd: Command, stdin: Option<Vec<u8>>, budget: Duration)
                 exit_code: None,
                 timed_out: false,
                 stdout: Vec::new(),
-                stderr: format!("verifier-guest: spawn failed: {e}\n").into_bytes(),
+                stderr: format!("rebut-guest: spawn failed: {e}\n").into_bytes(),
             }
         }
     };
@@ -259,7 +259,7 @@ async fn run_command(mut cmd: Command, stdin: Option<Vec<u8>>, budget: Duration)
     let drain = |h: tokio::task::JoinHandle<Vec<u8>>| async move {
         match tokio::time::timeout(PIPE_DRAIN_GRACE, h).await {
             Ok(Ok(buf)) => buf,
-            _ => b"[verifier: output lost]\n".to_vec(),
+            _ => b"[rebut: output lost]\n".to_vec(),
         }
     };
     Captured {
@@ -304,7 +304,7 @@ async fn read_capped<R: AsyncRead + Unpin>(pipe: Option<R>) -> Vec<u8> {
     }
     if dropped > 0 {
         buf.extend_from_slice(
-            format!("\n[verifier: output truncated, {dropped} bytes omitted]\n").as_bytes(),
+            format!("\n[rebut: output truncated, {dropped} bytes omitted]\n").as_bytes(),
         );
     }
     buf
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(c.exit_code, Some(0));
         assert!(!c.timed_out);
         let marker = format!(
-            "\n[verifier: output truncated, {} bytes omitted]\n",
+            "\n[rebut: output truncated, {} bytes omitted]\n",
             1_100_000 - OUTPUT_CAP
         );
         assert_eq!(c.stdout.len(), OUTPUT_CAP + marker.len());
@@ -390,7 +390,7 @@ mod tests {
         let req = ExecutionRequest {
             id: uuid::Uuid::nil(),
             repo_url: "local".into(),
-            commit: verifier_core::CommitSha::new("0".repeat(40)).unwrap(),
+            commit: rebut_core::CommitSha::new("0".repeat(40)).unwrap(),
             steps: vec![Step::Test { filters: vec![] }],
             timeout_secs: 0,
             vcpus: 1,

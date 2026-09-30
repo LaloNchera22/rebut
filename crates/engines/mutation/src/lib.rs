@@ -5,7 +5,7 @@
 //! not a bug: nothing was shown to be wrong, only unobserved. Per ADR-6 a
 //! surviving mutant is therefore a [`Hypothesis`] (source
 //! [`HypothesisSource::Generator`]), reported in
-//! [`EngineReport::unreproduced`], and never a [`verifier_core::Finding`].
+//! [`EngineReport::unreproduced`], and never a [`rebut_core::Finding`].
 //!
 //! # What exists now and what lands in phase 2
 //!
@@ -17,7 +17,7 @@
 //!
 //! What is missing is the *executor step*: `cargo mutants` builds and runs the
 //! PR's code (so `build.rs` and proc-macros execute) and must only ever run
-//! inside the fabric's microVM. The core [`verifier_core::Step`] enum has only
+//! inside the fabric's microVM. The core [`rebut_core::Step`] enum has only
 //! `Build`, `Test` and `Harness`; none of them returns an artifact such as
 //! `outcomes.json`. Phase 2 adds a `Step::Mutants { diff: String,
 //! timeout_secs: u64 }` variant (diff passed in, `outcomes.json` returned on
@@ -29,10 +29,10 @@
 
 use std::collections::BTreeSet;
 
-use serde::Deserialize;
-use verifier_core::{
+use rebut_core::{
     Engine, EngineContext, EngineKind, EngineReport, FnSignature, Hypothesis, HypothesisSource,
 };
+use serde::Deserialize;
 
 /// Explanation logged when the engine runs without the phase-2 executor step.
 pub const PHASE2_NOTE: &str = "mutation engine: running cargo-mutants inside the microVM needs a \
@@ -419,20 +419,20 @@ mod tests {
 
     struct NoExec;
     #[async_trait::async_trait]
-    impl verifier_core::Executor for NoExec {
+    impl rebut_core::Executor for NoExec {
         async fn execute(
             &self,
-            _: verifier_core::ExecutionRequest,
-        ) -> anyhow::Result<verifier_core::ExecutionResult> {
+            _: rebut_core::ExecutionRequest,
+        ) -> anyhow::Result<rebut_core::ExecutionResult> {
             anyhow::bail!("mutation engine must not execute anything in phase 1")
         }
     }
 
     fn ctx() -> EngineContext {
-        let sha = verifier_core::CommitSha::new("a".repeat(40)).unwrap();
+        let sha = rebut_core::CommitSha::new("a".repeat(40)).unwrap();
         EngineContext {
-            pr: verifier_core::PullRequest {
-                repo: verifier_core::RepoId {
+            pr: rebut_core::PullRequest {
+                repo: rebut_core::RepoId {
                     owner: "o".into(),
                     name: "n".into(),
                 },
@@ -446,7 +446,7 @@ mod tests {
             },
             intent: Default::default(),
             policy: Default::default(),
-            plan: verifier_core::ImpactPlan {
+            plan: rebut_core::ImpactPlan {
                 changed_files: vec!["src/parse.rs".into()],
                 ..Default::default()
             },

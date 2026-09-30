@@ -17,7 +17,7 @@ does scale separately, the VM fleet, sits behind the `Executor` trait anyway.
 Build one Cargo workspace that deploys as one control-plane binary. Module boundaries
 are enforced as crate boundaries:
 
-- every crate depends on `verifier-core`, which holds the shared vocabulary and the
+- every crate depends on `rebut-core`, which holds the shared vocabulary and the
   two invariants that must not drift (ADR-6 and sealed-output asymmetry);
 - engines implement `core::Engine` and are orchestrated only through it;
 - hostile code runs only through `core::Executor`. The fabric is the one component

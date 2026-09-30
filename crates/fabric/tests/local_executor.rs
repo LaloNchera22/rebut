@@ -7,8 +7,8 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-use verifier_core::{CommitSha, ExecutionRequest, Executor, Step};
-use verifier_fabric::{DirectorySource, LocalProcessExecutor};
+use rebut_core::{CommitSha, ExecutionRequest, Executor, Step};
+use rebut_fabric::{DirectorySource, LocalProcessExecutor};
 
 fn fixture(dir: &Path) {
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -79,7 +79,7 @@ async fn build_test_and_harness_succeed() {
             Step::Harness {
                 name: "shout".into(),
                 source: HARNESS.into(),
-                input: b"hello verifier\n".to_vec(),
+                input: b"hello rebut\n".to_vec(),
             },
         ],
         false,
@@ -97,14 +97,14 @@ async fn build_test_and_harness_succeed() {
     }
     let test_out = String::from_utf8_lossy(&res.outcomes[1].stdout);
     assert!(test_out.contains("test tests::shouts ... ok"), "{test_out}");
-    assert_eq!(res.outcomes[2].stdout, b"HELLO VERIFIER\n");
+    assert_eq!(res.outcomes[2].stdout, b"HELLO REBUT\n");
     assert_eq!(
         res.transcript,
-        verifier_core::ExecutionResult::compute_transcript(&req, &res.outcomes)
+        rebut_core::ExecutionResult::compute_transcript(&req, &res.outcomes)
     );
     assert_eq!(
         res.environment,
-        verifier_fabric::local::local_environment_digest()
+        rebut_fabric::local::local_environment_digest()
     );
 }
 

@@ -10,12 +10,12 @@
 //! # Decision (ADR-8)
 //!
 //! * **BBS signatures** (IETF CFRG draft `draft-irtf-cfrg-bbs-signatures`):
-//!   the issuer (the verifier service) signs a vector of attributes derived
+//!   the issuer (the Rebut service) signs a vector of attributes derived
 //!   from the [`crate::TrustGraph`]; the holder derives zero-knowledge proofs
 //!   that disclose a chosen subset of attributes and prove predicates over
 //!   the rest. Presentations are unlinkable to each other and to issuance.
 //! * **Nullifiers**: each presentation carries a pseudonym deterministically
-//!   derived from the holder's secret and a verifier-chosen *scope* (e.g.
+//!   derived from the holder's secret and a Rebut-chosen *scope* (e.g.
 //!   `"repo:owner/name:bounty-2026-10"`). Same holder + same scope ⇒ same
 //!   nullifier, so one person cannot claim a scoped benefit twice; different
 //!   scopes are unlinkable.
@@ -28,7 +28,7 @@
 //! reviewed BBS library; until one is integrated this module is a contract,
 //! not a feature.
 
-use verifier_core::Digest;
+use rebut_core::Digest;
 
 /// A signed attribute. Attributes are ordered; indices are part of the
 /// credential schema and must never be reused with a different meaning.
@@ -56,7 +56,7 @@ pub enum Predicate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Nullifier(pub [u8; 32]);
 
-/// What a verifier learns from a valid presentation — and nothing more.
+/// What a Rebut learns from a valid presentation — and nothing more.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedPresentation {
     pub disclosed: Vec<(usize, Attribute)>,
@@ -87,7 +87,7 @@ pub trait CredentialScheme {
 
     /// Holder derives an unlinkable presentation disclosing `disclose`
     /// (attribute indices), proving `predicates` over the rest, bound to
-    /// `scope` (nullifier domain) and `nonce` (verifier challenge, prevents
+    /// `scope` (nullifier domain) and `nonce` (rebut challenge, prevents
     /// replay).
     fn present(
         pk: &Self::IssuerPublicKey,
@@ -99,7 +99,7 @@ pub trait CredentialScheme {
         nonce: &[u8],
     ) -> Result<Self::Presentation, Self::Error>;
 
-    /// Verifier checks a presentation for its own `scope` and `nonce`.
+    /// Rebut checks a presentation for its own `scope` and `nonce`.
     fn verify(
         pk: &Self::IssuerPublicKey,
         presentation: &Self::Presentation,

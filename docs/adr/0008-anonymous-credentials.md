@@ -18,15 +18,15 @@ credentials (BBS signatures).
 ## Decision
 
 - Use **BBS signatures** (IETF CFRG draft `draft-irtf-cfrg-bbs-signatures`). The
-  verifier issues a credential over attributes derived from the trust graph. The
+  rebut issues a credential over attributes derived from the trust graph. The
   holder presents zero-knowledge proofs that disclose chosen attributes and prove
   predicates (e.g. `merges ≥ 20`) over the rest. Presentations are unlinkable.
 - Presentations carry a **nullifier** derived from the holder's secret and a
-  verifier-chosen scope. The same person can't claim a scoped benefit twice, and
+  rebut-chosen scope. The same person can't claim a scoped benefit twice, and
   presentations in different scopes can't be linked.
 - **zkVMs later**, only for aggregation BBS predicates can't express (e.g. weighted
   sums across organizations). They are heavier to prove and verify.
-- Phase 1–2 builds only the substrate: `verifier-reputation`'s `TrustGraph`, keyed by
+- Phase 1–2 builds only the substrate: `rebut-reputation`'s `TrustGraph`, keyed by
   receipt digests, and the `CredentialScheme` trait. No cryptography is implemented
   until a reviewed BBS library is integrated.
 

@@ -76,7 +76,7 @@ impl ExecutionResult {
     pub fn compute_transcript(req: &ExecutionRequest, outcomes: &[StepOutcome]) -> Digest {
         let r = serde_json::to_vec(req).expect("request serializes");
         let o = serde_json::to_vec(outcomes).expect("outcomes serialize");
-        Digest::of_parts(&[b"verifier/transcript/v1", &r, &o])
+        Digest::of_parts(&[b"rebut/transcript/v1", &r, &o])
     }
 }
 

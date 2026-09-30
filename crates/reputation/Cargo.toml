@@ -1,13 +1,15 @@
 [package]
-name = "verifier-reputation"
+name = "rebut-reputation"
 description = "Phase 3: trust graph of verified merges keyed by receipt digests; anonymous-credential interface (ADR-8)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+publish = false
 
 [dependencies]
-verifier-core.workspace = true
+rebut-core.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

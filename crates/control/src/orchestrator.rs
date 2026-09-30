@@ -6,23 +6,23 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use time::OffsetDateTime;
-use tracing::Instrument;
-use uuid::Uuid;
-use verifier_core::{
+use rebut_core::{
     Budget, Digest, DrandBeacon, Engine, EngineContext, EngineKind, ExecutionRequest,
     ExecutionResult, Executor, Finding, ImpactPlan, IntentManifest, Policy, PullRequest, RepoId,
     Seed, Verdict, VerdictStatus, GENERATOR_VERSION,
 };
-use verifier_receipts::{ReceiptContext, Signer, TransparencyLog};
+use rebut_receipts::{ReceiptContext, Signer, TransparencyLog};
+use time::OffsetDateTime;
+use tracing::Instrument;
+use uuid::Uuid;
 
 use crate::forge::{check_run, Forge, ReceiptRef};
 use crate::queue::Job;
 use crate::store::{RunRecord, Store};
 
-pub const POLICY_PATH: &str = ".verifier/policy.toml";
-pub const INTENT_PATH: &str = ".verifier/intent.toml";
-pub const VERIFIER_VERSION: &str = concat!("verifier-control/", env!("CARGO_PKG_VERSION"));
+pub const POLICY_PATH: &str = ".rebut/policy.toml";
+pub const INTENT_PATH: &str = ".rebut/intent.toml";
+pub const REBUT_VERSION: &str = concat!("rebut-control/", env!("CARGO_PKG_VERSION"));
 
 /// Produces the impact plan for a PR. The real implementation is the planner
 /// crate; the control plane only depends on this seam.
@@ -100,7 +100,7 @@ impl Orchestrator {
             },
         };
         let policy_digest = Digest::of_parts(&[
-            b"verifier/policy/v1",
+            b"rebut/policy/v1",
             &serde_json::to_vec(&policy).expect("policy serializes"),
         ]);
 
@@ -146,9 +146,9 @@ impl Orchestrator {
             environment_digests: metered.environments(),
             beacon,
             generator_version: GENERATOR_VERSION.to_string(),
-            verifier_version: VERIFIER_VERSION.to_string(),
+            rebut_version: REBUT_VERSION.to_string(),
         };
-        let envelope = verifier_receipts::sign_verdict(&verdict, &ctx, self.signer.as_ref())
+        let envelope = rebut_receipts::sign_verdict(&verdict, &ctx, self.signer.as_ref())
             .await
             .context("signing receipt")?;
         let entry = self
@@ -196,7 +196,7 @@ impl Orchestrator {
         })
     }
 
-    /// Head `.verifier/intent.toml` wins over a block in the PR body. An
+    /// Head `.rebut/intent.toml` wins over a block in the PR body. An
     /// unparsable manifest falls back to `Unspecified`, which claims nothing.
     async fn intent(&self, pr: &PullRequest) -> anyhow::Result<IntentManifest> {
         let parsed = match self
@@ -392,9 +392,9 @@ mod tests {
     use crate::forge::{CheckRun, Conclusion};
     use crate::queue::{InMemoryQueue, JobQueue};
     use crate::store::InMemoryStore;
+    use rebut_core::*;
+    use rebut_receipts::{verify_envelope, Ed25519Signer, InMemoryLog};
     use std::collections::HashMap;
-    use verifier_core::*;
-    use verifier_receipts::{verify_envelope, Ed25519Signer, InMemoryLog};
 
     #[derive(Default)]
     pub struct FakeForge {
@@ -564,7 +564,7 @@ mod tests {
             planner: Arc::new(FakePlanner),
             beacon: Arc::new(FakeBeacon),
             sealed: Arc::new(NoSealedSpecs),
-            public_url: Some("https://verifier.example".into()),
+            public_url: Some("https://rebut.example".into()),
         };
         Fixture {
             orch,
@@ -634,7 +634,7 @@ mod tests {
         assert!(checks[0].summary.contains("category `integer-overflow`"));
         assert!(checks[0]
             .summary
-            .contains(&format!("verifier.example/v1/receipts/{}", out.run_id)));
+            .contains(&format!("rebut.example/v1/receipts/{}", out.run_id)));
     }
 
     #[tokio::test]

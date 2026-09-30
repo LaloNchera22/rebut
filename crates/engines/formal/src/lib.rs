@@ -32,7 +32,7 @@ pub use codegen::{
     Scalar,
 };
 pub use kani::{check_shape, parse_kani_output, KaniOutcome};
-use verifier_core::{
+use rebut_core::{
     Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest, ExecutionResult, Finding,
     FnSignature, Hypothesis, HypothesisSource, IntentManifest, Reproduction, Step, Visibility,
 };
@@ -74,8 +74,8 @@ pub enum ReplayOutcome {
     Unreproduced(String),
 }
 
-const START: &[u8] = b"verifier:start\n";
-const EXPECTED: &[u8] = b"exit:Some(0)\nverifier:start\nverifier:invariant:held\n";
+const START: &[u8] = b"rebut:start\n";
+const EXPECTED: &[u8] = b"exit:Some(0)\nrebut:start\nrebut:invariant:held\n";
 
 /// The request that replays `values` against the PR head.
 pub fn replay_request(
@@ -131,13 +131,13 @@ pub fn judge_replay(
     if !run.stdout.starts_with(START) {
         return unrepro("replay harness did not reach the function call");
     }
-    if contains(&run.stdout, b"verifier:assumption-violated") {
+    if contains(&run.stdout, b"rebut:assumption-violated") {
         return unrepro("counterexample violates the invariant's preconditions");
     }
     let Some(repro) = Reproduction::confirm(result, 1, input, EXPECTED.to_vec()) else {
         return unrepro("invariant held on the real binary; Kani result not reproduced");
     };
-    let violated = contains(repro.observed(), b"verifier:invariant:violated");
+    let violated = contains(repro.observed(), b"rebut:invariant:violated");
     let (category, title, explained) = if violated {
         (
             "invariant-violation",
@@ -307,8 +307,8 @@ impl Engine for FormalEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rebut_core::{CommitSha, Digest, Executor, PullRequest, RepoId, StepOutcome};
     use std::sync::Mutex;
-    use verifier_core::{CommitSha, Digest, Executor, PullRequest, RepoId, StepOutcome};
 
     /// Fake fabric: "runs" the replay by evaluating a Rust closure standing in
     /// for the compiled harness.
@@ -361,17 +361,14 @@ mod tests {
             .collect();
         let (x, lo, hi) = (v[0], v[1], v[2]);
         if lo > hi {
-            return (
-                0,
-                b"verifier:start\nverifier:assumption-violated\n".to_vec(),
-            );
+            return (0, b"rebut:start\nrebut:assumption-violated\n".to_vec());
         }
         let ret = if x > hi { hi } else { x };
         let held = ret >= lo && ret <= hi;
         let line = if held { "held" } else { "violated" };
         (
             0,
-            format!("verifier:start\nverifier:invariant:{line}\n").into_bytes(),
+            format!("rebut:start\nrebut:invariant:{line}\n").into_bytes(),
         )
     }
 
@@ -417,7 +414,7 @@ mod tests {
             },
             intent: IntentManifest::default(),
             policy: Default::default(),
-            plan: verifier_core::ImpactPlan {
+            plan: rebut_core::ImpactPlan {
                 changed_functions: vec![FnSignature {
                     path: "mylib::math::clamp".into(),
                     args: vec!["i32".into(), "i32".into(), "i32".into()],
@@ -464,7 +461,7 @@ mod tests {
         assert!(!r.findings[0].is_actionable());
         // Under a declared refactor, the same counterexample counts.
         let mut c = ctx(e.clone());
-        c.intent.kind = verifier_core::ChangeKind::Refactor;
+        c.intent.kind = rebut_core::ChangeKind::Refactor;
         let r = engine.run(&c).await.unwrap();
         let f = &r.findings[0];
         assert_eq!(f.category, "invariant-violation");
@@ -487,7 +484,7 @@ mod tests {
         // A correct clamp: Kani's (spurious, e.g. modelling bug) counterexample
         // does not reproduce on the real binary.
         fn correct(_: &[u8]) -> (i32, Vec<u8>) {
-            (0, b"verifier:start\nverifier:invariant:held\n".to_vec())
+            (0, b"rebut:start\nrebut:invariant:held\n".to_vec())
         }
         let e = exec(correct);
         let engine = FormalEngine::new(Arc::new(FixedProposer))
@@ -513,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn panic_after_start_is_a_panic_finding() {
         fn panics(_: &[u8]) -> (i32, Vec<u8>) {
-            (101, b"verifier:start\n".to_vec())
+            (101, b"rebut:start\n".to_vec())
         }
         let e = exec(panics);
         let engine = FormalEngine::new(Arc::new(FixedProposer))

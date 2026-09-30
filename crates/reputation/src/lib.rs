@@ -15,8 +15,8 @@ pub mod credential;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rebut_core::Digest;
 use serde::{Deserialize, Serialize};
-use verifier_core::Digest;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReputationError {

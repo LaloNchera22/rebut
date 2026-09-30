@@ -1,6 +1,6 @@
 # Default policy: phase-1 "mark, don't block".
-# Copy to `.verifier/policy.toml` on your repository's default branch.
-# The verifier reads it from the PR's *base* commit, never from the PR head.
+# Copy to `.rebut/policy.toml` on your repository's default branch.
+# The Rebut reads it from the PR's *base* commit, never from the PR head.
 
 # "mark": the check run concludes `neutral` and annotates the PR. It never fails.
 mode = "mark"

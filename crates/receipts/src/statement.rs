@@ -2,10 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-use verifier_core::{
+use rebut_core::{
     Digest, DrandBeacon, EnforcementMode, EngineKind, Verdict, VerdictStatus, Visibility,
 };
+use serde::{Deserialize, Serialize};
 
 pub const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 /// Placeholder domain until the project has a permanent one.
@@ -41,7 +41,7 @@ pub struct VerificationPredicate {
     pub policy_digest: Digest,
     /// Digests of every microVM environment (rootfs/kernel/snapshot) used.
     pub environment_digests: Vec<Digest>,
-    pub verifier_version: String,
+    pub rebut_version: String,
 }
 
 /// Everything needed to recompute the seed (ADR-7).
@@ -71,7 +71,7 @@ pub struct ReceiptContext {
     pub environment_digests: Vec<Digest>,
     pub beacon: Option<DrandBeacon>,
     pub generator_version: String,
-    pub verifier_version: String,
+    pub rebut_version: String,
 }
 
 pub fn build_statement(verdict: &Verdict, ctx: &ReceiptContext) -> Statement {
@@ -119,7 +119,7 @@ pub fn build_statement(verdict: &Verdict, ctx: &ReceiptContext) -> Statement {
             inconclusive_reason: verdict.inconclusive_reason.clone(),
             policy_digest: ctx.policy_digest,
             environment_digests,
-            verifier_version: ctx.verifier_version.clone(),
+            rebut_version: ctx.rebut_version.clone(),
         },
     }
 }
@@ -127,7 +127,7 @@ pub fn build_statement(verdict: &Verdict, ctx: &ReceiptContext) -> Statement {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use verifier_core::*;
+    use rebut_core::*;
 
     pub fn sample_verdict(secret: &[u8]) -> Verdict {
         let result = ExecutionResult {
@@ -186,7 +186,7 @@ pub(crate) mod tests {
                 signature: "cd".into(),
             }),
             generator_version: GENERATOR_VERSION.into(),
-            verifier_version: "0.1.0".into(),
+            rebut_version: "0.1.0".into(),
         }
     }
 

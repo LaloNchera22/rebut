@@ -1,6 +1,6 @@
-# verifier
+# rebut
 
-**verifier** checks pull requests by running them. It builds and executes the PR
+**Rebut** checks pull requests by running them. It builds and executes the PR
 (head) and its merge base (base) in throwaway Firecracker microVMs, compares their
 behavior on the same inputs, runs challenge inputs seeded from public randomness,
 and publishes a signed [in-toto](https://in-toto.io) receipt of what it did in an
@@ -20,7 +20,7 @@ a finding exists only if a concrete, recorded execution reproduces it.
 
 ```
                  ┌──────────────────────────── integration ────────────────────────────┐
-  GitHub  ──────▶│  GitHub App webhooks · check runs · CLI (verifier-cli) · MCP server │
+  GitHub  ──────▶│  GitHub App webhooks · check runs · CLI (rebut) · MCP server │
                  └──────────────────────────────┬──────────────────────────────────────┘
                                                 │ PR event (base sha, head sha, body)
                  ┌──────────────────────────────▼──────────── control ──────────────────┐
@@ -46,9 +46,9 @@ a finding exists only if a concrete, recorded execution reproduces it.
 ## How a PR flows
 
 1. **Event.** The GitHub App receives `pull_request` and enqueues a job in Postgres.
-2. **Policy and intent.** The control plane reads `.verifier/policy.toml` from the
-   **base** commit and the intent manifest (`.verifier/intent.toml` in head, or a
-   `verifier-intent` fenced block in the PR body). The intent is what the contributor
+2. **Policy and intent.** The control plane reads `.rebut/policy.toml` from the
+   **base** commit and the intent manifest (`.rebut/intent.toml` in head, or a
+   `rebut-intent` fenced block in the PR body). The intent is what the contributor
    *claims* the PR does, e.g. `refactor` means "no observable behavior changes".
 3. **Seed.** It waits for the first [drand](https://drand.love) round published after
    the push and derives `seed = H(commit_sha ‖ drand_round ‖ randomness ‖ generator_version)`.
@@ -90,7 +90,7 @@ crates/
 ├── adversary            rival agent: untrusted hypotheses → replay → findings (phase 2)
 ├── receipts             in-toto receipts, signing, transparency log
 ├── reputation           trust graph of verified merges; credential interface (phase 3)
-├── cli                  `verifier` command line
+├── cli                  `rebut` command line
 └── mcp                  MCP server for agents
 policies/                example policy.toml and intent manifests
 docs/                    ADRs, threat model, council notes
@@ -114,17 +114,17 @@ wait for dedicated executor steps and never report an unverified claim as a find
 # Run the public checks on your branch against main. This builds and runs YOUR
 # code locally without a sandbox, like `cargo test`; the hosted service runs the
 # same engines in Firecracker. Mark mode: exits 0 unless --fail-on-findings.
-cargo run -p verifier-cli -- verify --base main
-cargo run -p verifier-cli -- verify --base main --offline --json
+cargo run -p rebut -- verify --base main
+cargo run -p rebut -- verify --base main --offline --json
 
 # Recompute the challenge seed for a commit and drand round.
-cargo run -p verifier-cli -- seed --help
+cargo run -p rebut -- seed --help
 
 # Regenerate the public challenges a receipt claims were run.
-cargo run -p verifier-cli -- challenges regenerate --help
+cargo run -p rebut -- challenges regenerate --help
 
 # Verify a receipt's signature and transparency-log inclusion.
-cargo run -p verifier-cli -- receipt verify --help
+cargo run -p rebut -- receipt verify --help
 ```
 
 Example output for a PR that declares `kind = "refactor"`, keeps its tests green,
@@ -148,26 +148,26 @@ DATABASE_URL=postgres://... \
 GITHUB_WEBHOOK_SECRET=... GITHUB_APP_ID=... GITHUB_PRIVATE_KEY_PATH=app.pem \
 SIGNING_KEY_PATH=receipts.key \
 EXECUTOR=firecracker FC_KERNEL=/var/lib/rebut/vmlinux FC_ROOTFS=/var/lib/rebut/rootfs.ext4 \
-cargo run -p verifier-control
+cargo run -p rebut-control
 ```
 
 `EXECUTOR` is `none` by default: nothing runs and every verdict is inconclusive,
 never a pass. `firecracker` needs bare metal with KVM (ADR-4). `insecure-local`
 runs PR code unsandboxed and is for development only. Other settings
 (`SEALED_SPECS_DIR`, `REKOR_URL`, `MAINTAINER_TOKEN`, `FC_*`) are listed by
-`cargo run -p verifier-control -- --help`.
+`cargo run -p rebut-control -- --help`.
 
 ### MCP server for agents
 
 ```sh
-cargo build -p verifier-mcp --release
-claude mcp add verifier -- ./target/release/verifier-mcp
+cargo build -p rebut-mcp --release
+claude mcp add rebut -- ./target/release/rebut-mcp
 ```
 
 Tools: `verify_local`, `derive_seed`, `regenerate_challenges`, `verify_receipt`,
 `get_report`.
 
-Configure a repository by committing `.verifier/policy.toml` on its default branch.
+Configure a repository by committing `.rebut/policy.toml` on its default branch.
 See [`policies/`](policies/README.md).
 
 Development:
