@@ -130,6 +130,31 @@ defenses:
 - **Mark, don't block.** Phase 1 defaults to `mode = "mark"`. Blocking is opt-in per
   repository.
 
+## Anonymous credentials (phase 3)
+
+**Threat.** A contributor forges or inflates a reputation credential, replays someone
+else's presentation, or claims a scoped benefit twice. A verifier, or several
+colluding verifiers, link presentations to deanonymize a contributor.
+
+**Defense** ([ADR-8](adr/0008-anonymous-credentials.md)). Credentials are BBS
+signatures by the issuer over attributes from the trust graph. A presentation is a
+zero-knowledge proof bound to the verifier's nonce (no replay) and scope. Predicates
+are signed booleans that the verifier rebuilds as "true", so a holder can't claim a
+bucket they don't have. Proofs are re-randomized, and pseudonyms for different scopes
+are unlinkable. Inputs are length-checked and identity points rejected before the BBS
+library sees them.
+
+**Residual.**
+
+- The BBS implementation (zkryptium 0.7.1) is experimental and unaudited.
+- A holder with two credentials has two nullifiers per scope. One claim per person
+  holds only if the issuer issues one credential per author per scope lifetime.
+- The issuer is trusted to compute attributes honestly; `ReceiptsCommitment` lets an
+  auditor with the receipts check it. Sybil resistance comes from receipts being
+  expensive to earn, not from the credentials.
+- Disclosed attributes leak what they say. An exact merge count, a first-merge day or
+  the receipts commitment can single out a contributor; prefer buckets.
+
 ## Out of scope (for now)
 
 - Vulnerabilities in dependencies the PR doesn't change. That's supply-chain

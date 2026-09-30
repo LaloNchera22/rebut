@@ -96,7 +96,7 @@ crates/
 │   └── formal           LLM invariants → Kani → counterexamples replayed (phase 2)
 ├── adversary            rival agent: untrusted hypotheses → replay → findings (phase 2)
 ├── receipts             in-toto receipts, signer identity, TEE attestation, transparency log
-├── reputation           trust graph of verified merges; credential interface (phase 3)
+├── reputation           trust graph of verified merges; BBS anonymous credentials (phase 3)
 ├── cli                  `verifier` command line
 └── mcp                  MCP server for agents
 policies/                example policy.toml and intent manifests
@@ -126,7 +126,13 @@ Open design question for ADR-5: a TEE that signs whatever the host hands it only
 protects the key, not the verdict. Receipts stop requiring trust in the operator
 only once the measured build itself produces or checks the verdict.
 
-Phase-3 crates (reputation) exist and are tested, but are not wired in.
+### Phase 3 status
+
+| Piece | State |
+|---|---|
+| Trust graph | Verified merges keyed by receipt digest, with merge times and reverts. Not fed by the control plane yet. |
+| Anonymous credentials | BBS blind issuance, selective disclosure, threshold-bucket predicates (`merges ≥ 1…1000`, `reverts ≤ 0…5`) and per-scope nullifiers, on zkryptium 0.7.1 ([ADR-8](docs/adr/0008-anonymous-credentials.md)). `verifier credential verify` checks a presentation. **Experimental:** zkryptium is unaudited, no service issues credentials yet, and one-credential-per-author issuance (needed for nullifiers to mean one per person) is not enforced. |
+| Python repositories | Not started. |
 
 ## Quickstart
 
@@ -145,6 +151,9 @@ cargo run -p verifier-cli -- challenges regenerate --help
 
 # Verify a receipt's signature and transparency-log inclusion.
 cargo run -p verifier-cli -- receipt verify --help
+
+# Check an anonymous-credential presentation for your scope and nonce.
+cargo run -p verifier-cli -- credential verify --help
 ```
 
 Example output for a PR that declares `kind = "refactor"`, keeps its tests green,
