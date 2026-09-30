@@ -1,0 +1,25 @@
+# Strict policy: block mode, every engine.
+# Only switch to this after running `default.toml` for a few weeks with no false
+# positives on your repository.
+
+# "block": the check run fails when a finding is not explained by the PR's declared
+# intent. Inconclusive runs (build failure, budget exhausted) never fail a PR.
+mode = "block"
+
+# "mutation" and "formal" are phase-2 engines. Until their executor steps land, they
+# only record hypotheses and never produce findings.
+engines = ["differential", "challenges", "mutation", "formal"]
+
+# Commitments to two sealed specs kept outside the repository. Replace with
+# `sha256sum your-spec.toml`. The "sha256:" prefix is optional.
+sealed_commitments = [
+    "3f6c1e0a9b7d4c2e8f1a5b6c7d8e9f00112233445566778899aabbccddeeff00",
+    "sha256:9a8b7c6d5e4f30211203f4e5d6c7b8a99887766554433221100ffeeddccbbaa9",
+]
+
+[budget]
+vm_timeout_secs = 900
+vcpus = 4
+memory_mib = 8192
+pr_vm_seconds = 3600
+public_challenges = 256

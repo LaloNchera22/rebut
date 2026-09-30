@@ -1,0 +1,18 @@
+# Intent manifest: what the contributor claims this PR does.
+# Put it in `.verifier/intent.toml` in the PR (head), or in the PR body as a
+# fenced block tagged `verifier-intent`. The file wins if both exist.
+#
+# kind:
+#   "refactor"     no observable behavior change anywhere
+#   "performance"  same as refactor: faster, but no behavior change
+#   "bugfix"       behavior changes only in `changes_behavior_of`
+#   "feature"      behavior may change; divergences are informational
+#   "unspecified"  no claim (default); divergences are informational
+kind = "bugfix"
+
+# Fully qualified paths (`crate::module::function`) whose behavior may change.
+# A path also covers everything nested under it (`mylib::parse` covers
+# `mylib::parse::header`).
+changes_behavior_of = ["mylib::parse::header"]
+
+summary = "Reject headers whose length field exceeds the buffer instead of panicking."

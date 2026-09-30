@@ -2634,7 +2634,20 @@ dependencies = [
 name = "verifier-challenges"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.119",
+ "thiserror",
+ "tokio",
+ "toml",
+ "uuid",
  "verifier-core",
+ "verifier-differential",
 ]
 
 [[package]]

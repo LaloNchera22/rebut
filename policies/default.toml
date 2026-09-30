@@ -1,0 +1,23 @@
+# Default policy: phase-1 "mark, don't block".
+# Copy to `.verifier/policy.toml` on your repository's default branch.
+# The verifier reads it from the PR's *base* commit, never from the PR head.
+
+# "mark": the check run concludes `neutral` and annotates the PR. It never fails.
+mode = "mark"
+
+# Engines to run. Phase 1: "differential", "challenges".
+engines = ["differential", "challenges"]
+
+# SHA-256 of your sealed challenge specs (the specs themselves stay private).
+# Empty: no sealed challenges.
+sealed_commitments = []
+
+[budget]
+# Wall-clock limit for one microVM run, in seconds.
+vm_timeout_secs = 600
+vcpus = 2
+memory_mib = 4096
+# Total VM-seconds one PR may spend across all engines.
+pr_vm_seconds = 1800
+# Public challenge cases generated per PR from the drand seed.
+public_challenges = 64
