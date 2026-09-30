@@ -2,12 +2,13 @@
 //!
 //! Pipeline, per changed function whose signature Kani can model:
 //!
-//! 1. An [`InvariantProposer`] (in practice an LLM) proposes invariants.
-//!    Each one is a [`Hypothesis`] with [`HypothesisSource::Llm`] — a guess,
-//!    worth nothing on its own (ADR-6).
+//! 1. An [`InvariantProposer`] (in production [`AnthropicInvariantProposer`])
+//!    proposes invariants. Each one is a [`Hypothesis`] with
+//!    [`HypothesisSource::Llm`] — a guess, worth nothing on its own (ADR-6).
 //! 2. [`HarnessSpec::kani_harness`] renders a `#[kani::proof]` with
 //!    `kani::any()` arguments and `kani::assume` preconditions.
-//! 3. A [`KaniRunner`] runs `cargo kani` (inside the fabric) and
+//! 3. A [`KaniRunner`] (in production [`FabricKaniRunner`], which issues a
+//!    [`Step::Kani`] to a fresh microVM) runs `cargo kani` and
 //!    [`parse_kani_output`] reads the verdict and the concrete counterexample
 //!    printed by `--concrete-playback=print`.
 //! 4. [`replay_counterexample`] replays that input through the ordinary
@@ -16,22 +17,29 @@
 //!    [`Reproduction::confirm`] produce a [`Finding`].
 //!
 //! Kani itself must run in the microVM (it compiles the PR, so `build.rs`
-//! executes). Core's [`Step`] has no variant for it; phase 2 adds
-//! `Step::Kani { harness: String, source: String }` returning Kani's stdout.
-//! Until then [`FormalEngine`] is constructed without a runner and reports
-//! the proposed invariants as unreproduced hypotheses.
+//! executes). A [`FormalEngine`] built without a runner ([`FormalEngine::new`]
+//! alone) only records the proposed invariants as unreproduced hypotheses.
+//!
+//! Status: the Kani path is tested end to end against a fake executor with
+//! real-shaped `cargo kani` output, but has not yet been run against a real
+//! `cargo-kani` install (none is available in the development environment).
+//! The output format assumed by [`parse_kani_output`] is Kani 0.5x's.
 
+pub mod anthropic;
 pub mod codegen;
 pub mod kani;
+pub mod runner;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+pub use anthropic::AnthropicInvariantProposer;
 pub use codegen::{
     encode_input, kani_argv, ArgType, CodegenError, GeneratedHarness, HarnessSpec, Invariant,
     Scalar,
 };
 pub use kani::{check_shape, parse_kani_output, KaniOutcome};
+pub use runner::{kani_request, FabricKaniRunner};
 use verifier_core::{
     Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest, ExecutionResult, Finding,
     FnSignature, Hypothesis, HypothesisSource, IntentManifest, Reproduction, Step, Visibility,
@@ -48,12 +56,46 @@ pub trait InvariantProposer: Send + Sync {
     ) -> anyhow::Result<Vec<Invariant>>;
 }
 
+/// Proposes the same invariants for every function. Useful for tests and
+/// for maintainers who want to check fixed properties; `StaticProposer::none()`
+/// proposes nothing.
+#[derive(Debug, Clone, Default)]
+pub struct StaticProposer(pub Vec<Invariant>);
+
+impl StaticProposer {
+    pub fn none() -> Self {
+        StaticProposer(Vec::new())
+    }
+}
+
+#[async_trait::async_trait]
+impl InvariantProposer for StaticProposer {
+    async fn propose(&self, _: &FnSignature, _: &EngineContext) -> anyhow::Result<Vec<Invariant>> {
+        Ok(self.0.clone())
+    }
+}
+
+/// One `cargo kani` run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KaniRun {
+    /// Kani's stdout, for [`parse_kani_output`].
+    pub stdout: String,
+    /// VM-seconds spent; added to the engine report.
+    pub vm_seconds: u64,
+    /// Set when the runner knows the run produced no verdict and why
+    /// (timeout, Kani never started, compile error). The invariant then stays
+    /// an unchecked hypothesis.
+    pub failure: Option<String>,
+}
+
 /// Runs `cargo kani` ([`kani_argv`]) on the PR head with `harness.source`
-/// appended to the crate root, returning Kani's stdout. Implementations must
-/// execute inside the fabric, never on the host.
+/// appended to the crate root. Implementations must execute inside the
+/// fabric, never on the host. `Err` is for infrastructure failures (the
+/// executor could not run the request at all).
 #[async_trait::async_trait]
 pub trait KaniRunner: Send + Sync {
-    async fn run(&self, ctx: &EngineContext, harness: &GeneratedHarness) -> anyhow::Result<String>;
+    async fn run(&self, ctx: &EngineContext, harness: &GeneratedHarness)
+        -> anyhow::Result<KaniRun>;
 }
 
 /// The hypothesis an invariant stands for.
@@ -75,7 +117,8 @@ pub enum ReplayOutcome {
 }
 
 const START: &[u8] = b"verifier:start\n";
-const EXPECTED: &[u8] = b"exit:Some(0)\nverifier:start\nverifier:invariant:held\n";
+const EXPECTED: &[u8] =
+    b"exit:Some(0)\nverifier:start\nverifier:returned\nverifier:invariant:held\n";
 
 /// The request that replays `values` against the PR head.
 pub fn replay_request(
@@ -128,16 +171,21 @@ pub fn judge_replay(
     if run.timed_out {
         return unrepro("replay timed out");
     }
+    if run.stdout.starts_with(b"verifier:assumption-violated\n") {
+        return unrepro("counterexample violates the invariant's preconditions");
+    }
     if !run.stdout.starts_with(START) {
         return unrepro("replay harness did not reach the function call");
-    }
-    if contains(&run.stdout, b"verifier:assumption-violated") {
-        return unrepro("counterexample violates the invariant's preconditions");
     }
     let Some(repro) = Reproduction::confirm(result, 1, input, EXPECTED.to_vec()) else {
         return unrepro("invariant held on the real binary; Kani result not reproduced");
     };
     let violated = contains(repro.observed(), b"verifier:invariant:violated");
+    if !violated && contains(repro.observed(), b"verifier:returned\n") {
+        // The function returned; the proposed property itself panicked
+        // (overflow, unwrap...). That is the guess's fault, not the code's.
+        return unrepro("invariant expression failed after the function returned");
+    }
     let (category, title, explained) = if violated {
         (
             "invariant-violation",
@@ -207,7 +255,9 @@ pub struct FormalEngine {
 }
 
 impl FormalEngine {
-    /// Phase-1 construction: no Kani runner, proposals are only recorded.
+    /// No Kani runner: proposals are only recorded as unreproduced
+    /// hypotheses. Add one with [`FormalEngine::with_kani`]; in production,
+    /// `FormalEngine::new(proposer).with_kani(Arc::new(FabricKaniRunner))`.
     pub fn new(proposer: Arc<dyn InvariantProposer>) -> Self {
         FormalEngine {
             proposer,
@@ -254,19 +304,26 @@ impl Engine for FormalEngine {
                 };
                 let Some(kani) = &self.kani else {
                     hyp.claim
-                        .push_str(" [not checked: Kani executor step lands in phase 2]");
+                        .push_str(" [not checked: no Kani runner configured]");
                     report.unreproduced.push(hyp);
                     continue;
                 };
-                let out = match kani.run(ctx, &spec.kani_harness()).await {
-                    Ok(o) => o,
+                let run = match kani.run(ctx, &spec.kani_harness()).await {
+                    Ok(r) => r,
                     Err(e) => {
                         hyp.claim.push_str(&format!(" [kani failed: {e}]"));
                         report.unreproduced.push(hyp);
                         continue;
                     }
                 };
-                match parse_kani_output(&out) {
+                report.vm_seconds += run.vm_seconds;
+                if let Some(why) = run.failure {
+                    hyp.claim
+                        .push_str(&format!(" [kani gave no verdict: {why}]"));
+                    report.unreproduced.push(hyp);
+                    continue;
+                }
+                match parse_kani_output(&run.stdout) {
                     // Proved: nothing to report, and nothing to tune either.
                     KaniOutcome::Verified => {}
                     KaniOutcome::Unknown => {
@@ -361,17 +418,14 @@ mod tests {
             .collect();
         let (x, lo, hi) = (v[0], v[1], v[2]);
         if lo > hi {
-            return (
-                0,
-                b"verifier:start\nverifier:assumption-violated\n".to_vec(),
-            );
+            return (0, b"verifier:assumption-violated\n".to_vec());
         }
         let ret = if x > hi { hi } else { x };
         let held = ret >= lo && ret <= hi;
         let line = if held { "held" } else { "violated" };
         (
             0,
-            format!("verifier:start\nverifier:invariant:{line}\n").into_bytes(),
+            format!("verifier:start\nverifier:returned\nverifier:invariant:{line}\n").into_bytes(),
         )
     }
 
@@ -393,13 +447,25 @@ mod tests {
     struct CannedKani(String);
     #[async_trait::async_trait]
     impl KaniRunner for CannedKani {
-        async fn run(&self, _: &EngineContext, h: &GeneratedHarness) -> anyhow::Result<String> {
+        async fn run(&self, _: &EngineContext, h: &GeneratedHarness) -> anyhow::Result<KaniRun> {
             assert!(h.source.contains("#[kani::proof]"));
-            Ok(self.0.clone())
+            Ok(KaniRun {
+                stdout: self.0.clone(),
+                vm_seconds: 30,
+                failure: None,
+            })
         }
     }
 
-    fn ctx(exec: Arc<dyn Executor>) -> EngineContext {
+    pub(crate) struct NoExec;
+    #[async_trait::async_trait]
+    impl Executor for NoExec {
+        async fn execute(&self, _: ExecutionRequest) -> anyhow::Result<ExecutionResult> {
+            anyhow::bail!("unused")
+        }
+    }
+
+    pub(crate) fn ctx(exec: Arc<dyn Executor>) -> EngineContext {
         let sha = CommitSha::new("c".repeat(40)).unwrap();
         EngineContext {
             pr: PullRequest {
@@ -487,7 +553,10 @@ mod tests {
         // A correct clamp: Kani's (spurious, e.g. modelling bug) counterexample
         // does not reproduce on the real binary.
         fn correct(_: &[u8]) -> (i32, Vec<u8>) {
-            (0, b"verifier:start\nverifier:invariant:held\n".to_vec())
+            (
+                0,
+                b"verifier:start\nverifier:returned\nverifier:invariant:held\n".to_vec(),
+            )
         }
         let e = exec(correct);
         let engine = FormalEngine::new(Arc::new(FixedProposer))
@@ -521,5 +590,57 @@ mod tests {
         let r = engine.run(&ctx(e)).await.unwrap();
         assert_eq!(r.findings.len(), 1);
         assert_eq!(r.findings[0].category, "panic");
+    }
+
+    #[tokio::test]
+    async fn invariant_that_panics_itself_is_not_a_finding() {
+        // The function returned; the proposed property then panicked (e.g.
+        // `a0.checked_add(1).unwrap() > 0` on i32::MAX).
+        fn property_panics(_: &[u8]) -> (i32, Vec<u8>) {
+            (101, b"verifier:start\nverifier:returned\n".to_vec())
+        }
+        // A precondition that panics never reaches `verifier:start`.
+        fn assumption_panics(_: &[u8]) -> (i32, Vec<u8>) {
+            (101, b"".to_vec())
+        }
+        for f in [property_panics, assumption_panics] {
+            let e = exec(f);
+            let engine = FormalEngine::new(Arc::new(FixedProposer))
+                .with_kani(Arc::new(CannedKani(kani::FAILED_FIXTURE.to_string())));
+            let r = engine.run(&ctx(e)).await.unwrap();
+            assert!(r.findings.is_empty(), "{r:?}");
+            assert_eq!(r.unreproduced.len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn runner_failure_keeps_hypothesis_and_counts_seconds() {
+        struct TimedOut;
+        #[async_trait::async_trait]
+        impl KaniRunner for TimedOut {
+            async fn run(
+                &self,
+                _: &EngineContext,
+                _: &GeneratedHarness,
+            ) -> anyhow::Result<KaniRun> {
+                Ok(KaniRun {
+                    stdout: "Checking harness...".into(),
+                    vm_seconds: 600,
+                    failure: Some("timed out after 600s".into()),
+                })
+            }
+        }
+        let e = exec(buggy_clamp);
+        let r = FormalEngine::new(Arc::new(FixedProposer))
+            .with_kani(Arc::new(TimedOut))
+            .run(&ctx(e.clone()))
+            .await
+            .unwrap();
+        assert!(r.findings.is_empty());
+        assert_eq!(r.vm_seconds, 600);
+        assert!(r.unreproduced[0]
+            .claim
+            .ends_with("[kani gave no verdict: timed out after 600s]"));
+        assert!(e.seen.lock().unwrap().is_empty());
     }
 }

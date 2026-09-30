@@ -52,6 +52,11 @@ pub struct Config {
     /// drand relay; defaults to the League of Entropy quicknet endpoint.
     #[arg(long, env = "DRAND_URL")]
     pub drand_url: Option<String>,
+    /// Enables the formal engine's invariant proposer and the rival agent
+    /// (phase 2). Their output is only ever a hypothesis to replay (ADR-6).
+    /// Models: `VERIFIER_FORMAL_MODEL`, `VERIFIER_ADVERSARY_MODEL`.
+    #[arg(long, env = "ANTHROPIC_API_KEY", hide_env_values = true)]
+    pub anthropic_api_key: Option<String>,
     #[command(flatten)]
     pub firecracker: FirecrackerArgs,
 }

@@ -2,13 +2,29 @@
 //!
 //! A [`HypothesisGenerator`] (an LLM, a heuristic, a fuzzer's corpus) reads a
 //! PR and guesses where it breaks. Its output is untrusted: a guess is a
-//! [`Hypothesis`], never a [`Finding`] (ADR-6). [`Adversary::triage`] takes
-//! those guesses and, for each one that carries a concrete
+//! [`Hypothesis`], never a [`Finding`] (ADR-6). [`AdversaryEngine`] is the
+//! [`Engine`] the orchestrator runs: it asks the generator, then hands the
+//! guesses to [`Adversary::triage`], which deduplicates them and, for each one
+//! that targets a changed, harnessable function and carries a concrete
 //! `candidate_input`, runs a harness through the [`Executor`] (the microVM
-//! fabric). Only an execution that actually misbehaves becomes a `Finding`,
-//! via [`Reproduction::confirm`] / [`Reproduction::confirm_divergence`].
-//! Everything else — hallucinations, inputs that don't reproduce, targets we
-//! can't harness — ends in [`EngineReport::unreproduced`] for tuning.
+//! fabric). Only an execution that actually misbehaves, twice in a row, and
+//! not already on base, becomes a `Finding`, via [`Reproduction::confirm`] /
+//! [`Reproduction::confirm_divergence`]. Everything else (hallucinations,
+//! inputs that don't reproduce, targets we can't harness, replays cut by the
+//! budget) ends in [`EngineReport::unreproduced`] with the reason appended to
+//! its claim, for tuning.
+//!
+//! The model never chooses what runs. The harness source is generated here
+//! from the planner's [`FnSignature`], the step list is fixed
+//! (`Build`, `Harness`), and the only model-controlled bytes that reach the
+//! executor are the harness's stdin.
+//!
+//! The rival agent is an extra, never a reason to withhold a pass. A failing
+//! generator (network, rate limit, malformed answer, timeout) or an executor
+//! error mid-triage yields a report with whatever was confirmed so far and no
+//! `inconclusive` reason: the orchestrator turns any inconclusive engine into
+//! an `Inconclusive` verdict, and a flaky LLM must not do that to a PR. The
+//! cost is a possibly missed bug, which the Skeptic's rule accepts.
 //!
 //! The consequence the ML engineer accepted when proposing ADR-6: a rival
 //! agent that hallucinates costs VM-seconds, never a contributor's reputation.
@@ -17,12 +33,14 @@
 
 pub mod anthropic;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use std::time::Duration;
 
 pub use anthropic::{parse_hypotheses, AnthropicGenerator, ANTHROPIC_VERSION, DEFAULT_MODEL};
 use verifier_core::{
-    CommitSha, EngineContext, EngineKind, EngineReport, ExecutionRequest, ExecutionResult,
-    Executor, Finding, FnSignature, Hypothesis, Reproduction, Step, Visibility,
+    CommitSha, Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest, ExecutionResult,
+    Executor, Finding, FnSignature, Hypothesis, Reproduction, Step, StepOutcome, Visibility,
 };
 
 /// Anything that proposes hypotheses about a PR.
@@ -34,10 +52,11 @@ pub trait HypothesisGenerator: Send + Sync {
 /// What a replay is checked against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Oracle {
-    /// The head must not panic (or exit non-zero) on the input.
+    /// The head must not panic (or exit non-zero) on the input, unless base
+    /// fails on it too (a pre-existing bug is not this PR's).
     NoPanic,
-    /// The head must behave like the base on the input (unless the declared
-    /// intent allows the target's behavior to change).
+    /// The head must behave like the base on the input. A divergence the
+    /// declared intent allows is recorded as informational, never actionable.
     Differential,
 }
 
@@ -104,11 +123,11 @@ pub fn harness_source(sig: &FnSignature, shape: InputShape, oracle: Oracle) -> S
 #[derive(Debug, Clone)]
 pub struct Adversary {
     pub oracle: Oracle,
-    /// Engine the findings are attributed to (core's `EngineKind` has no
-    /// dedicated adversary variant).
-    pub engine: EngineKind,
-    /// Max hypotheses replayed per PR (VM budget).
+    /// Max hypotheses replayed per PR.
     pub max_runs: usize,
+    /// Share of `policy.budget.pr_vm_seconds` this engine may spend, in
+    /// percent. Checked before each replay; a replay in progress finishes.
+    pub vm_share_percent: u8,
     /// Max candidate input size accepted, in bytes.
     pub max_input_bytes: usize,
 }
@@ -117,8 +136,8 @@ impl Default for Adversary {
     fn default() -> Self {
         Adversary {
             oracle: Oracle::NoPanic,
-            engine: EngineKind::Differential,
-            max_runs: 16,
+            max_runs: 8,
+            vm_share_percent: 25,
             max_input_bytes: 64 * 1024,
         }
     }
@@ -155,35 +174,72 @@ fn request(
     }
 }
 
+fn harness_step(r: &ExecutionResult) -> Option<&StepOutcome> {
+    r.outcomes.iter().find(|o| o.step_index == 1)
+}
+
 /// The harness (step 1) started, finished or panicked, but did not time out
 /// and did not fail before reaching the call.
 fn harness_ran(r: &ExecutionResult) -> bool {
     let built = r.outcomes.iter().any(|o| o.step_index == 0 && o.success());
-    let run = r.outcomes.iter().find(|o| o.step_index == 1);
-    built && matches!(run, Some(o) if !o.timed_out && o.stdout.starts_with(START))
+    built && matches!(harness_step(r), Some(o) if !o.timed_out && o.stdout.starts_with(START))
+}
+
+/// Two runs of the same request observed the same thing (exit status and
+/// stdout, like `Reproduction`; stderr and timings are noise).
+fn same_observation(a: &ExecutionResult, b: &ExecutionResult) -> bool {
+    match (harness_step(a), harness_step(b)) {
+        (Some(a), Some(b)) => {
+            a.exit_code == b.exit_code && a.timed_out == b.timed_out && a.stdout == b.stdout
+        }
+        _ => false,
+    }
 }
 
 fn vm_secs(r: &ExecutionResult) -> u64 {
-    r.outcomes.iter().map(|o| o.duration_ms).sum::<u64>() / 1000
+    // Rounded up: under-counting would let the engine overrun its share.
+    r.outcomes
+        .iter()
+        .map(|o| o.duration_ms)
+        .sum::<u64>()
+        .div_ceil(1000)
 }
 
+/// One replay's outcome: a confirmed finding, or why the hypothesis did not
+/// make it.
+type Replay = Result<Finding, &'static str>;
+
 impl Adversary {
-    /// Replay every hypothesis that carries a candidate input; only confirmed
-    /// executions become findings.
+    /// VM-seconds this engine may spend on `ctx`'s PR.
+    pub fn vm_budget_secs(&self, ctx: &EngineContext) -> u64 {
+        ctx.policy.budget.pr_vm_seconds * u64::from(self.vm_share_percent.min(100)) / 100
+    }
+
+    /// Replay the hypotheses that can be replayed, within budget; only
+    /// confirmed executions become findings. Never fails: an executor error
+    /// stops the replays and the rest go to `unreproduced`.
     pub async fn triage(
         &self,
         hypotheses: Vec<Hypothesis>,
         executor: &dyn Executor,
         ctx: &EngineContext,
-    ) -> anyhow::Result<EngineReport> {
+    ) -> EngineReport {
         let mut report = EngineReport::default();
+        let mut seen = BTreeSet::new();
         let mut runs = 0usize;
+        let mut halted: Option<String> = None;
+        let budget = self.vm_budget_secs(ctx);
         for mut h in hypotheses {
+            if !seen.insert((h.target.clone(), h.candidate_input.clone())) {
+                tracing::debug!(target = %h.target, "dropping duplicate hypothesis");
+                continue;
+            }
+            let why_not = |h: &mut Hypothesis, why: &str| h.claim.push_str(&format!(" [{why}]"));
             let Some(input) = h.candidate_input.clone() else {
+                why_not(&mut h, "no candidate input");
                 report.unreproduced.push(h);
                 continue;
             };
-            let why_not = |h: &mut Hypothesis, why: &str| h.claim.push_str(&format!(" [{why}]"));
             let Some(sig) = ctx
                 .plan
                 .changed_functions
@@ -206,313 +262,210 @@ impl Adversary {
                 report.unreproduced.push(h);
                 continue;
             }
+            if let Some(reason) = &halted {
+                why_not(&mut h, &format!("replays halted: {reason}"));
+                report.unreproduced.push(h);
+                continue;
+            }
             if runs >= self.max_runs {
-                why_not(&mut h, "adversary run budget exhausted");
+                why_not(&mut h, "adversary replay cap reached");
+                report.unreproduced.push(h);
+                continue;
+            }
+            if report.vm_seconds >= budget {
+                why_not(&mut h, "adversary VM budget share exhausted");
                 report.unreproduced.push(h);
                 continue;
             }
             runs += 1;
-            let name = format!("adversary_{runs}");
-            let source = harness_source(sig, shape, self.oracle);
-            let head = executor
-                .execute(request(
-                    ctx,
-                    &ctx.pr.head_clone_url,
-                    &ctx.pr.head_sha,
-                    name.clone(),
-                    source.clone(),
-                    input.clone(),
-                ))
-                .await?;
-            report.vm_seconds += vm_secs(&head);
-            if !harness_ran(&head) {
-                why_not(&mut h, "harness did not reach the call on head");
-                report.unreproduced.push(h);
-                continue;
-            }
-            let finding = match self.oracle {
-                Oracle::NoPanic => Reproduction::confirm(
-                    &head,
-                    1,
+            let replay = self
+                .replay(
+                    sig,
+                    shape,
                     input,
-                    b"exit:Some(0)\nverifier:start\nverifier:done\n".to_vec(),
+                    runs,
+                    executor,
+                    ctx,
+                    &mut report.vm_seconds,
                 )
-                .map(|r| {
-                    Finding::new(
-                        self.engine,
-                        "panic",
-                        format!("`{}` panics on an adversarial input", sig.path),
-                        Visibility::Public,
-                        Some(sig.path.clone()),
-                        false,
-                        r,
-                    )
-                }),
-                Oracle::Differential => {
-                    let base = executor
-                        .execute(request(
-                            ctx,
-                            &ctx.pr.base_clone_url,
-                            &ctx.pr.base_sha,
-                            name,
-                            source,
-                            input.clone(),
-                        ))
-                        .await?;
-                    report.vm_seconds += vm_secs(&base);
-                    if !harness_ran(&base) {
-                        why_not(&mut h, "harness did not reach the call on base");
-                        report.unreproduced.push(h);
-                        continue;
-                    }
-                    Reproduction::confirm_divergence(&base, 1, &head, 1, input).map(|r| {
-                        Finding::new(
-                            self.engine,
-                            "divergence",
-                            format!(
-                                "`{}` behaves differently from base on an adversarial input",
-                                sig.path
-                            ),
-                            Visibility::Public,
-                            Some(sig.path.clone()),
-                            ctx.intent.allows_behavior_change(&sig.path),
-                            r,
-                        )
-                    })
-                }
-            };
-            match finding {
-                Some(f) => report.findings.push(f),
-                None => {
-                    why_not(&mut h, "did not reproduce");
+                .await;
+            match replay {
+                Ok(Ok(f)) => report.findings.push(f),
+                Ok(Err(why)) => {
+                    why_not(&mut h, why);
                     report.unreproduced.push(h);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "executor failed; stopping adversary replays");
+                    let reason = format!("executor error: {e:#}");
+                    why_not(&mut h, &reason);
+                    report.unreproduced.push(h);
+                    halted = Some(reason);
                 }
             }
         }
-        Ok(report)
+        report
     }
 
-    /// Ask a generator, then triage. A failing generator yields an empty
-    /// report: the rival agent is an extra, never a reason to be inconclusive.
-    pub async fn run(
+    /// Run one hypothesis. The outer error is an executor failure; the inner
+    /// one a hypothesis that did not hold up.
+    #[allow(clippy::too_many_arguments)]
+    async fn replay(
         &self,
-        generator: &dyn HypothesisGenerator,
+        sig: &FnSignature,
+        shape: InputShape,
+        input: Vec<u8>,
+        n: usize,
+        executor: &dyn Executor,
         ctx: &EngineContext,
-    ) -> anyhow::Result<EngineReport> {
-        let hyps = match generator.propose(ctx).await {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::warn!(error = %e, "hypothesis generator failed");
+        vm_seconds: &mut u64,
+    ) -> anyhow::Result<Replay> {
+        let name = format!("adversary_{n}");
+        let source = harness_source(sig, shape, self.oracle);
+        let pr = &ctx.pr;
+        let req = |head: bool| {
+            let (url, sha) = if head {
+                (&pr.head_clone_url, &pr.head_sha)
+            } else {
+                (&pr.base_clone_url, &pr.base_sha)
+            };
+            request(ctx, url, sha, name.clone(), source.clone(), input.clone())
+        };
+        let run = |head: bool| {
+            let req = req(head);
+            async move { executor.execute(req).await }
+        };
+        let mut charge = |r: ExecutionResult| {
+            *vm_seconds += vm_secs(&r);
+            r
+        };
+
+        let head = charge(run(true).await?);
+        if !harness_ran(&head) {
+            return Ok(Err("harness did not reach the call on head"));
+        }
+        match self.oracle {
+            Oracle::NoPanic => {
+                // Only a failing call counts. Comparing the whole stdout with
+                // a fixed expectation would flag functions that print.
+                if harness_step(&head).is_some_and(StepOutcome::success) {
+                    return Ok(Err("did not reproduce"));
+                }
+                let base = charge(run(false).await?);
+                if harness_ran(&base) && !harness_step(&base).is_some_and(StepOutcome::success) {
+                    return Ok(Err("also fails on base: not introduced by this PR"));
+                }
+                if !same_observation(&head, &charge(run(true).await?)) {
+                    return Ok(Err("not deterministic on head"));
+                }
+                let expected = b"exit:Some(0)\nverifier:start\nverifier:done\n".to_vec();
+                Ok(Reproduction::confirm(&head, 1, input, expected)
+                    .map(|r| {
+                        Finding::new(
+                            EngineKind::Adversary,
+                            "panic",
+                            format!("`{}` panics on an adversarial input", sig.path),
+                            Visibility::Public,
+                            Some(sig.path.clone()),
+                            false,
+                            r,
+                        )
+                    })
+                    .ok_or("did not reproduce"))
+            }
+            Oracle::Differential => {
+                let base = charge(run(false).await?);
+                if !harness_ran(&base) {
+                    return Ok(Err("harness did not reach the call on base"));
+                }
+                let Some(repro) =
+                    Reproduction::confirm_divergence(&base, 1, &head, 1, input.clone())
+                else {
+                    return Ok(Err("did not reproduce"));
+                };
+                if !same_observation(&head, &charge(run(true).await?))
+                    || !same_observation(&base, &charge(run(false).await?))
+                {
+                    return Ok(Err("not deterministic"));
+                }
+                Ok(Ok(Finding::new(
+                    EngineKind::Adversary,
+                    "divergence",
+                    format!(
+                        "`{}` behaves differently from base on an adversarial input",
+                        sig.path
+                    ),
+                    Visibility::Public,
+                    Some(sig.path.clone()),
+                    ctx.intent.allows_behavior_change(&sig.path),
+                    repro,
+                )))
+            }
+        }
+    }
+}
+
+/// The rival agent as an [`Engine`]: generator, then [`Adversary::triage`].
+pub struct AdversaryEngine {
+    generator: Arc<dyn HypothesisGenerator>,
+    pub adversary: Adversary,
+    /// Wall-clock limit for the generator. Past it, the engine carries on as
+    /// if the generator had proposed nothing, before the orchestrator's own
+    /// timeout would mark the whole verdict inconclusive.
+    pub generator_timeout: Duration,
+}
+
+impl std::fmt::Debug for AdversaryEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdversaryEngine")
+            .field("adversary", &self.adversary)
+            .field("generator_timeout", &self.generator_timeout)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AdversaryEngine {
+    pub fn new(generator: Arc<dyn HypothesisGenerator>) -> Self {
+        AdversaryEngine {
+            generator,
+            adversary: Adversary::default(),
+            generator_timeout: Duration::from_secs(180),
+        }
+    }
+
+    /// Backed by [`AnthropicGenerator::from_env`] (`ANTHROPIC_API_KEY`,
+    /// optional `VERIFIER_ADVERSARY_MODEL`).
+    pub fn anthropic_from_env() -> anyhow::Result<Self> {
+        Ok(Self::new(Arc::new(AnthropicGenerator::from_env()?)))
+    }
+}
+
+#[async_trait::async_trait]
+impl Engine for AdversaryEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::Adversary
+    }
+
+    async fn run(&self, ctx: &EngineContext) -> anyhow::Result<EngineReport> {
+        let proposed = tokio::time::timeout(self.generator_timeout, self.generator.propose(ctx));
+        let hyps = match proposed.await {
+            Ok(Ok(h)) => h,
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "hypothesis generator failed; nothing to replay");
+                return Ok(EngineReport::default());
+            }
+            Err(_) => {
+                tracing::warn!(timeout = ?self.generator_timeout,
+                    "hypothesis generator timed out; nothing to replay");
                 return Ok(EngineReport::default());
             }
         };
-        self.triage(hyps, ctx.executor.as_ref(), ctx).await
+        Ok(self
+            .adversary
+            .triage(hyps, ctx.executor.as_ref(), ctx)
+            .await)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-    use verifier_core::{
-        ChangeKind, Digest, HypothesisSource, ImpactPlan, PullRequest, RepoId, StepOutcome,
-    };
-
-    const BASE: &str = "https://example.invalid/base.git";
-
-    /// Fake fabric. Head version of `mylib::parse::header` panics on inputs
-    /// starting with 0xFF; base returns the length for everything.
-    #[derive(Default)]
-    struct FakeExec {
-        calls: Mutex<Vec<ExecutionRequest>>,
-    }
-
-    #[async_trait::async_trait]
-    impl Executor for FakeExec {
-        async fn execute(&self, req: ExecutionRequest) -> anyhow::Result<ExecutionResult> {
-            let Step::Harness { input, source, .. } = &req.steps[1] else {
-                anyhow::bail!("expected harness")
-            };
-            let is_base = req.repo_url == BASE;
-            let (code, mut stdout) = (Some(0), b"verifier:start\n".to_vec());
-            let code = if !is_base && input.first() == Some(&0xFF) {
-                Some(101)
-            } else {
-                if source.contains("verifier:ret") {
-                    let ret = if is_base || input.len() < 4 {
-                        input.len()
-                    } else {
-                        4
-                    };
-                    stdout.extend_from_slice(format!("verifier:ret:{ret}\n").as_bytes());
-                }
-                stdout.extend_from_slice(b"verifier:done\n");
-                code
-            };
-            let outcomes = vec![
-                StepOutcome {
-                    step_index: 0,
-                    exit_code: Some(0),
-                    timed_out: false,
-                    stdout: vec![],
-                    stderr: vec![],
-                    duration_ms: 3000,
-                },
-                StepOutcome {
-                    step_index: 1,
-                    exit_code: code,
-                    timed_out: false,
-                    stdout,
-                    stderr: b"thread 'main' panicked".to_vec(),
-                    duration_ms: 5,
-                },
-            ];
-            self.calls.lock().unwrap().push(req.clone());
-            Ok(ExecutionResult {
-                request_id: req.id,
-                transcript: ExecutionResult::compute_transcript(&req, &outcomes),
-                outcomes,
-                environment: Digest::of(b"env"),
-            })
-        }
-    }
-
-    pub(crate) fn ctx(exec: Arc<dyn Executor>) -> EngineContext {
-        EngineContext {
-            pr: PullRequest {
-                repo: RepoId {
-                    owner: "o".into(),
-                    name: "mylib".into(),
-                },
-                number: 3,
-                base_sha: CommitSha::new("a".repeat(40)).unwrap(),
-                head_sha: CommitSha::new("b".repeat(40)).unwrap(),
-                head_clone_url: "https://example.invalid/head.git".into(),
-                base_clone_url: BASE.into(),
-                author: "mallory".into(),
-                body: "Refactor header parsing.".into(),
-            },
-            intent: Default::default(),
-            policy: Default::default(),
-            plan: ImpactPlan {
-                changed_functions: vec![FnSignature {
-                    path: "mylib::parse::header".into(),
-                    args: vec!["&[u8]".into()],
-                    ret: "usize".into(),
-                    is_pub: true,
-                }],
-                changed_files: vec!["src/parse.rs".into()],
-                ..Default::default()
-            },
-            seed: None,
-            sealed_specs: vec![],
-            executor: exec,
-        }
-    }
-
-    fn hyp(input: Option<&[u8]>, target: &str) -> Hypothesis {
-        Hypothesis {
-            source: HypothesisSource::Llm,
-            target: target.into(),
-            claim: "header() panics on a malformed magic byte".into(),
-            candidate_input: input.map(|i| i.to_vec()),
-        }
-    }
-
-    #[tokio::test]
-    async fn hallucination_never_becomes_a_finding() {
-        let exec = Arc::new(FakeExec::default());
-        let c = ctx(exec.clone());
-        let hyps = vec![
-            // No input at all: pure prose.
-            hyp(None, "mylib::parse::header"),
-            // Input that does not trigger anything.
-            hyp(Some(b"\x00\x01"), "mylib::parse::header"),
-            // Target that is not in the diff.
-            hyp(Some(b"\xFF"), "mylib::other::thing"),
-        ];
-        let r = Adversary::default()
-            .triage(hyps, exec.as_ref(), &c)
-            .await
-            .unwrap();
-        assert!(r.findings.is_empty());
-        assert_eq!(r.unreproduced.len(), 3);
-        assert_eq!(
-            exec.calls.lock().unwrap().len(),
-            1,
-            "only the harnessable one ran"
-        );
-    }
-
-    #[tokio::test]
-    async fn real_crash_becomes_a_finding() {
-        let exec = Arc::new(FakeExec::default());
-        let c = ctx(exec.clone());
-        let r = Adversary::default()
-            .triage(
-                vec![hyp(Some(b"\xFF\x00"), "mylib::parse::header")],
-                exec.as_ref(),
-                &c,
-            )
-            .await
-            .unwrap();
-        assert_eq!(r.findings.len(), 1);
-        let f = &r.findings[0];
-        assert_eq!(f.category, "panic");
-        assert_eq!(f.reproduction().input(), b"\xFF\x00");
-        assert_eq!(
-            f.reproduction().observed(),
-            b"exit:Some(101)\nverifier:start\n"
-        );
-        let calls = exec.calls.lock().unwrap();
-        assert!(
-            matches!(&calls[0].steps[1], Step::Harness { source, .. } if source.contains("mylib::parse::header(&buf)"))
-        );
-    }
-
-    #[tokio::test]
-    async fn differential_oracle_uses_base_as_expectation() {
-        let exec = Arc::new(FakeExec::default());
-        let mut c = ctx(exec.clone());
-        c.intent.kind = ChangeKind::Refactor;
-        let adv = Adversary {
-            oracle: Oracle::Differential,
-            ..Default::default()
-        };
-        let r = adv
-            .triage(
-                vec![
-                    hyp(Some(b"abcdefgh"), "mylib::parse::header"),
-                    hyp(Some(b"ab"), "mylib::parse::header"),
-                ],
-                exec.as_ref(),
-                &c,
-            )
-            .await
-            .unwrap();
-        assert_eq!(r.findings.len(), 1);
-        assert_eq!(r.findings[0].category, "divergence");
-        assert!(r.findings[0].is_actionable());
-        assert_eq!(r.unreproduced.len(), 1);
-    }
-
-    #[test]
-    fn harness_shapes() {
-        let sig = FnSignature {
-            path: "mylib::p".into(),
-            args: vec!["& str".into()],
-            ret: "bool".into(),
-            is_pub: true,
-        };
-        let shape = InputShape::of(&sig).unwrap();
-        assert_eq!(shape, InputShape::Str);
-        let src = harness_source(&sig, shape, Oracle::Differential);
-        assert!(src.contains("let ret = mylib::p(&text);"));
-        assert!(src.contains("verifier:ret:{:?}"));
-        let two = FnSignature {
-            args: vec!["u8".into(), "u8".into()],
-            ..sig
-        };
-        assert!(InputShape::of(&two).is_none());
-    }
-}
+mod tests;

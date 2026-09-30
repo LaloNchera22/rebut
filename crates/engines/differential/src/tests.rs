@@ -92,6 +92,9 @@ impl Executor for Fake {
                     }
                     (code, out)
                 }
+                Step::Mutants { .. } | Step::Kani { .. } => {
+                    unreachable!("differential never runs mutants or kani")
+                }
             };
             outcomes.push(StepOutcome {
                 step_index: i,

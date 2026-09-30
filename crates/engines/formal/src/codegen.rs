@@ -255,12 +255,19 @@ impl HarnessSpec {
     /// one concrete input against the real crate, outside Kani. Stdin is
     /// produced by [`encode_input`]. Its stdout protocol:
     ///
-    /// * `verifier:start` — input decoded, about to call the function;
     /// * `verifier:assumption-violated` — the counterexample does not satisfy
-    ///   the preconditions (so it proves nothing);
+    ///   the preconditions (so it proves nothing); printed instead of
+    ///   everything below;
+    /// * `verifier:start` — input decoded, preconditions hold, about to call
+    ///   the function;
+    /// * `verifier:returned` — the function returned;
     /// * `verifier:invariant:held` / `verifier:invariant:violated`.
     ///
-    /// A panic after `verifier:start` exits 101 with no verdict line.
+    /// A panic in the function exits 101 after `verifier:start` and before
+    /// `verifier:returned`. The invariant expressions are proposed text: if
+    /// they panic themselves (a precondition before `verifier:start`, the
+    /// property after `verifier:returned`), that must not be blamed on the
+    /// function.
     pub fn replay_harness(&self) -> GeneratedHarness {
         let mut s = String::new();
         s.push_str(&format!(
@@ -292,7 +299,6 @@ impl HarnessSpec {
             };
             s.push_str(&format!("    let a{i}: {} = {decode};\n", a.scalar.name()));
         }
-        s.push_str("    println!(\"verifier:start\");\n");
         if !self.invariant.assumptions.is_empty() {
             let conds: Vec<String> = self
                 .invariant
@@ -305,10 +311,12 @@ impl HarnessSpec {
                 conds.join(" && ")
             ));
         }
+        s.push_str("    println!(\"verifier:start\");\n");
         s.push_str(&format!(
             "    let ret = {};\n",
             self.call(&self.crate_ident())
         ));
+        s.push_str("    println!(\"verifier:returned\");\n");
         s.push_str(&format!(
             "    let holds: bool = {};\n",
             self.invariant.property
@@ -420,8 +428,14 @@ fn verifier_proof_math_clamp_0() {
         assert!(h
             .source
             .contains("let ret = mylib::math::clamp(a0, a1, a2);"));
-        assert!(h.source.contains("verifier:assumption-violated"));
         assert_eq!(h.name, "verifier_proof_math_clamp_1_replay");
+        // Preconditions are checked before `start`, the property only after
+        // `returned`, so a panicking invariant is never blamed on the function.
+        let at = |needle: &str| h.source.find(needle).unwrap();
+        assert!(at("verifier:assumption-violated") < at("verifier:start"));
+        assert!(at("verifier:start") < at("let ret = "));
+        assert!(at("let ret = ") < at("verifier:returned"));
+        assert!(at("verifier:returned") < at("let holds"));
     }
 
     #[test]

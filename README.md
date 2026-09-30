@@ -63,9 +63,16 @@ a finding exists only if a concrete, recorded execution reproduces it.
    - **challenges** runs public challenge inputs generated from the seed, plus
      **sealed** challenges from maintainer-private specs whose hashes are committed in
      the policy.
-   - phase 2: **mutation** (cargo-mutants scoped to the diff), **formal** (Kani
-     proofs of proposed invariants, with counterexamples replayed), and the
-     **adversary** (rival agent).
+   - **mutation** (phase 2) runs cargo-mutants scoped to the diff (`Step::Mutants`).
+     A surviving mutant means "the tests don't pin this", not "this is wrong", so it
+     is only ever a hypothesis, and a mutation failure never makes a verdict
+     inconclusive.
+   - **formal** (phase 2) asks Claude for invariants of changed functions, proves
+     them with Kani (`Step::Kani`), and replays every counterexample against the
+     real crate. Only a replay that misbehaves in the function itself is a finding.
+   - **adversary** (phase 2) is the rival agent: it proposes concrete inputs for
+     changed `pub` functions, and each one is replayed on head (and base). Findings
+     must reproduce twice and not already fail on base.
 6. **Verdict.** Findings come only from recorded executions. The contributor sees
    public findings in full. For sealed ones they see only "failed a challenge of
    category X".
@@ -86,9 +93,9 @@ crates/
 │   ├── differential     base vs head on the same inputs
 │   ├── challenges       drand-seeded public challenges + sealed challenges
 │   ├── mutation         cargo-mutants in the diff → hypotheses          (phase 2)
-│   └── formal           Kani harnesses; counterexamples replayed         (phase 2)
+│   └── formal           LLM invariants → Kani → counterexamples replayed (phase 2)
 ├── adversary            rival agent: untrusted hypotheses → replay → findings (phase 2)
-├── receipts             in-toto receipts, signing, transparency log
+├── receipts             in-toto receipts, signer identity, TEE attestation, transparency log
 ├── reputation           trust graph of verified merges; credential interface (phase 3)
 ├── cli                  `verifier` command line
 └── mcp                  MCP server for agents
@@ -104,9 +111,22 @@ docs/                    ADRs, threat model, council notes
 | **2** | Mutation engine, formal engine (Kani), rival agent, transparency-log receipts, TEE signer. |
 | **3** | Reputation with anonymous credentials (BBS + nullifiers). Python repositories. |
 
-The phase-2 and phase-3 crates already exist and are tested. They are kept small and
-honest about what they can't do yet. For example, the mutation and formal engines
-wait for dedicated executor steps and never report an unverified claim as a finding.
+### Phase 2 status
+
+| Piece | State |
+|---|---|
+| `Step::Mutants`, `Step::Kani` executor steps | Done in core and the guest agent. The VM rootfs must ship `cargo-mutants` and `cargo-kani` (and Kani's dependencies in the warm cargo cache). |
+| Mutation engine | Wired into the control plane with a base..head diff from the checkouts. Not yet run against a real cargo-mutants in a VM. |
+| Formal engine | Wired when `ANTHROPIC_API_KEY` is set (`VERIFIER_FORMAL_MODEL` overrides the model). Not yet run against a real cargo-kani. |
+| Rival agent | Wired when `ANTHROPIC_API_KEY` is set (`VERIFIER_ADVERSARY_MODEL`). Opt-in per repository: add `"adversary"` to `engines`. |
+| Transparency log | Rekor client exists; still untested against a live Rekor. |
+| TEE signer | Receipts carry a signed `signer` identity (`operator-key` or `tee`); `TeeSigner`, attestation traits and `verify_receipt_with_policy` exist. **Only the development-only software attestation verifies.** SEV-SNP reports are parsed and policy-checked but their signature and VCEK chain are not verified yet, so SNP receipts are always rejected. The control plane still signs with the operator key. |
+
+Open design question for ADR-5: a TEE that signs whatever the host hands it only
+protects the key, not the verdict. Receipts stop requiring trust in the operator
+only once the measured build itself produces or checks the verdict.
+
+Phase-3 crates (reputation) exist and are tested, but are not wired in.
 
 ## Quickstart
 
@@ -154,7 +174,7 @@ cargo run -p verifier-control
 `EXECUTOR` is `none` by default: nothing runs and every verdict is inconclusive,
 never a pass. `firecracker` needs bare metal with KVM (ADR-4). `insecure-local`
 runs PR code unsandboxed and is for development only. Other settings
-(`SEALED_SPECS_DIR`, `REKOR_URL`, `MAINTAINER_TOKEN`, `FC_*`) are listed by
+(`SEALED_SPECS_DIR`, `REKOR_URL`, `MAINTAINER_TOKEN`, `ANTHROPIC_API_KEY`, `FC_*`) are listed by
 `cargo run -p verifier-control -- --help`.
 
 ### MCP server for agents

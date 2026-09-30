@@ -42,6 +42,8 @@ pub enum EngineKind {
     Challenges,
     Mutation,
     Formal,
+    /// The rival agent (`verifier-adversary`).
+    Adversary,
 }
 
 impl std::fmt::Display for EngineKind {
@@ -51,6 +53,7 @@ impl std::fmt::Display for EngineKind {
             EngineKind::Challenges => "challenges",
             EngineKind::Mutation => "mutation",
             EngineKind::Formal => "formal",
+            EngineKind::Adversary => "adversary",
         };
         f.write_str(s)
     }
