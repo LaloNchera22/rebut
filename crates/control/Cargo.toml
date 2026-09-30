@@ -18,6 +18,8 @@ verifier-fabric.workspace = true
 verifier-differential.workspace = true
 verifier-challenges.workspace = true
 verifier-mutation.workspace = true
+verifier-formal.workspace = true
+verifier-adversary.workspace = true
 verifier-guest = { path = "../guest", default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
