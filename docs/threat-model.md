@@ -114,9 +114,12 @@ A wrong accusation costs more than a missed bug. One unfair rejection on a
 well-known project, and the maintainer uninstalls the app, publicly. Sources and
 defenses:
 
-- **Flaky tests** (time, randomness, ordering, network). By design the baseline runs on base
-  first. A test that fails or varies on base is excluded from the differential. We
-  record with `rr` on bare metal so a suspicious divergence can be replayed exactly.
+- **Flaky tests** (time, randomness, ordering, network). The differential engine runs
+  base and head at least twice each; any output that varies between identical runs is
+  discarded as flaky and never becomes a finding. A test that fails on base is not
+  counted as a regression. The guest pins the environment (`SOURCE_DATE_EPOCH`, `TZ`,
+  `LANG`, single test thread, no network). Recording with `rr` on bare metal, so a
+  divergence can be replayed exactly, is planned but not implemented yet.
 - **Noise in observations.** Findings compare exit status and stdout only. Stderr and
   timings are excluded on purpose (`core::finding::observation`).
 - **Unfounded claims.** LLM and tool output is never evidence
