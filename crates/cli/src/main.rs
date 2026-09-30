@@ -63,6 +63,38 @@ enum Cmd {
         #[command(subcommand)]
         command: ReceiptCmd,
     },
+    /// Anonymous credentials (ADR-8).
+    Credential {
+        #[command(subcommand)]
+        command: CredentialCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum CredentialCmd {
+    /// Check a credential presentation for your scope and nonce. Prints what
+    /// it proves, including its nullifier. Exits 1 if it is invalid or does
+    /// not prove a required predicate.
+    Verify {
+        /// Presentation JSON, as produced by the holder.
+        #[arg(long)]
+        presentation: PathBuf,
+        /// Issuer's BBS public key, hex (96 bytes).
+        #[arg(long)]
+        key: String,
+        /// Your scope (the nullifier domain), e.g. `repo:owner/name:bounty-2026-10`.
+        #[arg(long)]
+        scope: String,
+        /// The nonce you sent the holder.
+        #[arg(long)]
+        nonce: String,
+        /// Require a proven `verified merges >= N` (N must be a schema bucket).
+        #[arg(long)]
+        at_least_merges: Option<u64>,
+        /// Require a proven `reverted merges <= N` (N must be a schema bucket).
+        #[arg(long)]
+        at_most_reverts: Option<u64>,
+    },
 }
 
 #[derive(clap::Args)]
@@ -293,6 +325,53 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             let check = verify_receipt(&env, &parse_public_key(&key)?, entry.as_ref())?;
             println!("{}", serde_json::to_string_pretty(&check)?);
             Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Credential {
+            command:
+                CredentialCmd::Verify {
+                    presentation,
+                    key,
+                    scope,
+                    nonce,
+                    at_least_merges,
+                    at_most_reverts,
+                },
+        } => {
+            use verifier_reputation::credential::{self as cred, Predicate};
+            let pk = cred::IssuerPublicKey::from_bytes(
+                &hex::decode(key.trim()).context("issuer key is not hex")?,
+            )?;
+            let p: cred::Presentation = read_json(&presentation)?;
+            let verified = match cred::verify(&pk, &p, scope.as_bytes(), nonce.as_bytes()) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("INVALID: {e}");
+                    return Ok(ExitCode::from(1));
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&verified)?);
+            let required = at_least_merges
+                .map(|value| Predicate::AtLeast {
+                    attribute_index: cred::VERIFIED_MERGES,
+                    value,
+                })
+                .into_iter()
+                .chain(at_most_reverts.map(|value| Predicate::AtMost {
+                    attribute_index: cred::REVERTED_MERGES,
+                    value,
+                }));
+            let mut ok = true;
+            for r in required {
+                if !verified.proves(&r) {
+                    eprintln!("NOT PROVEN: {r:?}");
+                    ok = false;
+                }
+            }
+            Ok(if ok {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
         }
     }
 }
