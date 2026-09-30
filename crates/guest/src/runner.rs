@@ -191,7 +191,7 @@ impl<'a> Runner<'a> {
                 let root = self.crate_root()?;
                 let io = |e: std::io::Error| format!("appending kani harness: {e}");
                 let mut existing = std::fs::read_to_string(&root).map_err(io)?;
-                existing.push_str("\n");
+                existing.push('\n');
                 existing.push_str(source);
                 existing.push('\n');
                 std::fs::write(&root, existing).map_err(io)?;

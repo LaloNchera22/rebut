@@ -62,7 +62,9 @@ impl Executor for Fake {
                     }
                     (code, out)
                 }
-                Step::Test { .. } => unreachable!("challenges never run tests"),
+                Step::Test { .. } | Step::Mutants { .. } | Step::Kani { .. } => {
+                    unreachable!("challenges only build and run harnesses")
+                }
             };
             outcomes.push(StepOutcome {
                 step_index: i,
