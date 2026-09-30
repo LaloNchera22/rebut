@@ -1,0 +1,150 @@
+{
+  "cargo_mutants_version": "25.0.1",
+  "start_time": "2026-09-30T10:12:03.418Z",
+  "end_time": "2026-09-30T10:13:41.902Z",
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "summary": "Success",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 11.204,
+          "process_status": "Success",
+          "argv": ["/usr/local/cargo/bin/cargo", "test", "--no-run", "--verbose", "--package=mylib@0.3.1"]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.871,
+          "process_status": "Success",
+          "argv": ["/usr/local/cargo/bin/cargo", "test", "--verbose", "--package=mylib@0.3.1"]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mylib",
+          "file": "src/parse.rs",
+          "function": {
+            "function_name": "parse_len",
+            "return_type": "-> Option<usize>",
+            "span": { "start": { "line": 12, "column": 1 }, "end": { "line": 24, "column": 2 } }
+          },
+          "span": { "start": { "line": 14, "column": 9 }, "end": { "line": 14, "column": 35 } },
+          "replacement": "None",
+          "genre": "FnValue",
+          "name": "src/parse.rs:14:9: replace parse_len -> Option<usize> with None"
+        }
+      },
+      "log_path": "log/src__parse.rs_line_14_col_9.log",
+      "diff_path": "diff/src__parse.rs_line_14_col_9.diff",
+      "summary": "CaughtMutant",
+      "phase_results": [
+        { "phase": "Build", "duration": 2.51, "process_status": "Success", "argv": ["cargo", "test", "--no-run"] },
+        { "phase": "Test", "duration": 0.74, "process_status": { "Failure": 101 }, "argv": ["cargo", "test"] }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mylib",
+          "file": "src/parse.rs",
+          "function": {
+            "function_name": "parse_len",
+            "return_type": "-> Option<usize>",
+            "span": { "start": { "line": 12, "column": 1 }, "end": { "line": 24, "column": 2 } }
+          },
+          "span": { "start": { "line": 17, "column": 16 }, "end": { "line": 17, "column": 17 } },
+          "replacement": "<=",
+          "genre": "BinaryOperator",
+          "name": "src/parse.rs:17:16: replace < with <= in parse_len"
+        }
+      },
+      "log_path": "log/src__parse.rs_line_17_col_16.log",
+      "diff_path": "diff/src__parse.rs_line_17_col_16.diff",
+      "summary": "MissedMutant",
+      "phase_results": [
+        { "phase": "Build", "duration": 2.33, "process_status": "Success", "argv": ["cargo", "test", "--no-run"] },
+        { "phase": "Test", "duration": 0.69, "process_status": "Success", "argv": ["cargo", "test"] }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mylib",
+          "file": "src/checksum.rs",
+          "function": {
+            "function_name": "Crc::update",
+            "return_type": "",
+            "span": { "start": { "line": 40, "column": 5 }, "end": { "line": 52, "column": 6 } }
+          },
+          "span": { "start": { "line": 41, "column": 9 }, "end": { "line": 51, "column": 10 } },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "log_path": "log/src__checksum.rs_line_41_col_9.log",
+      "diff_path": "diff/src__checksum.rs_line_41_col_9.diff",
+      "summary": "MissedMutant",
+      "phase_results": [
+        { "phase": "Build", "duration": 2.9, "process_status": "Success", "argv": ["cargo", "test", "--no-run"] },
+        { "phase": "Test", "duration": 0.71, "process_status": "Success", "argv": ["cargo", "test"] }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mylib",
+          "file": "src/parse.rs",
+          "function": {
+            "function_name": "parse_len",
+            "return_type": "-> Option<usize>",
+            "span": { "start": { "line": 12, "column": 1 }, "end": { "line": 24, "column": 2 } }
+          },
+          "span": { "start": { "line": 20, "column": 13 }, "end": { "line": 20, "column": 15 } },
+          "replacement": "-=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "log_path": "log/src__parse.rs_line_20_col_13.log",
+      "diff_path": "diff/src__parse.rs_line_20_col_13.diff",
+      "summary": "Timeout",
+      "phase_results": [
+        { "phase": "Build", "duration": 2.4, "process_status": "Success", "argv": ["cargo", "test", "--no-run"] },
+        { "phase": "Test", "duration": 30.0, "process_status": "Timeout", "argv": ["cargo", "test"] }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mylib",
+          "file": "src/parse.rs",
+          "function": {
+            "function_name": "parse_len",
+            "return_type": "-> Option<usize>",
+            "span": { "start": { "line": 12, "column": 1 }, "end": { "line": 24, "column": 2 } }
+          },
+          "span": { "start": { "line": 14, "column": 9 }, "end": { "line": 14, "column": 35 } },
+          "replacement": "Some(Default::default())",
+          "genre": "FnValue"
+        }
+      },
+      "log_path": "log/src__parse.rs_line_14_col_9_001.log",
+      "diff_path": "diff/src__parse.rs_line_14_col_9_001.diff",
+      "summary": "Unviable",
+      "phase_results": [
+        { "phase": "Build", "duration": 1.2, "process_status": { "Failure": 101 }, "argv": ["cargo", "test", "--no-run"] }
+      ]
+    }
+  ],
+  "total_mutants": 5,
+  "missed": 2,
+  "caught": 1,
+  "timeout": 1,
+  "unviable": 1,
+  "success": 0,
+  "failure": 0
+}

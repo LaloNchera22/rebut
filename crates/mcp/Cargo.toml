@@ -1,9 +1,24 @@
 [package]
 name = "verifier-mcp"
+description = "MCP server (stdio) exposing local verification and independent audits to agents."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "verifier-mcp"
+path = "src/main.rs"
+
 [dependencies]
 verifier-core.workspace = true
+verifier-cli = { path = "../cli" }
+verifier-challenges.workspace = true
+verifier-receipts.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
