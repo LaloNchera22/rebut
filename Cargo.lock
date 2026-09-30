@@ -2642,10 +2642,10 @@ dependencies = [
  "serde_json",
  "sha2",
  "syn 2.0.119",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",
- "uuid",
  "verifier-core",
  "verifier-differential",
 ]
