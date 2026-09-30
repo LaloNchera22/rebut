@@ -1,0 +1,19 @@
+[package]
+name = "verifier-core"
+description = "Shared types, intent manifest, seeds, findings and the execution contract."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+sha2.workspace = true
+hex.workspace = true
+time.workspace = true
+uuid.workspace = true
