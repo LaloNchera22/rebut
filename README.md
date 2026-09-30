@@ -111,8 +111,11 @@ wait for dedicated executor steps and never report an unverified claim as a find
 ## Quickstart
 
 ```sh
-# Verify the current branch against main (builds and runs code in the fabric).
+# Run the public checks on your branch against main. This builds and runs YOUR
+# code locally without a sandbox, like `cargo test`; the hosted service runs the
+# same engines in Firecracker. Mark mode: exits 0 unless --fail-on-findings.
 cargo run -p verifier-cli -- verify --base main
+cargo run -p verifier-cli -- verify --base main --offline --json
 
 # Recompute the challenge seed for a commit and drand round.
 cargo run -p verifier-cli -- seed --help
@@ -123,6 +126,46 @@ cargo run -p verifier-cli -- challenges regenerate --help
 # Verify a receipt's signature and transparency-log inclusion.
 cargo run -p verifier-cli -- receipt verify --help
 ```
+
+Example output for a PR that declares `kind = "refactor"`, keeps its tests green,
+and swaps `saturating_add` for `wrapping_add`:
+
+```text
+plan: 1 changed fn(s), 1 test(s)
+
+[FINDING] differential / behavior-divergence: `demo::clamp_add` behaves differently on head than on base for a generated input
+  input:    255 255
+  expected: exit:Some(0) | #harness-start | case 0 ok "255"
+  observed: exit:Some(0) | #harness-start | case 0 ok "254"
+
+FLAGGED (mark mode: not blocking)
+```
+
+### Control plane (GitHub App)
+
+```sh
+DATABASE_URL=postgres://... \
+GITHUB_WEBHOOK_SECRET=... GITHUB_APP_ID=... GITHUB_PRIVATE_KEY_PATH=app.pem \
+SIGNING_KEY_PATH=receipts.key \
+EXECUTOR=firecracker FC_KERNEL=/var/lib/rebut/vmlinux FC_ROOTFS=/var/lib/rebut/rootfs.ext4 \
+cargo run -p verifier-control
+```
+
+`EXECUTOR` is `none` by default: nothing runs and every verdict is inconclusive,
+never a pass. `firecracker` needs bare metal with KVM (ADR-4). `insecure-local`
+runs PR code unsandboxed and is for development only. Other settings
+(`SEALED_SPECS_DIR`, `REKOR_URL`, `MAINTAINER_TOKEN`, `FC_*`) are listed by
+`cargo run -p verifier-control -- --help`.
+
+### MCP server for agents
+
+```sh
+cargo build -p verifier-mcp --release
+claude mcp add verifier -- ./target/release/verifier-mcp
+```
+
+Tools: `verify_local`, `derive_seed`, `regenerate_challenges`, `verify_receipt`,
+`get_report`.
 
 Configure a repository by committing `.verifier/policy.toml` on its default branch.
 See [`policies/`](policies/README.md).

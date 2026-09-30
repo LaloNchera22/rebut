@@ -2654,7 +2654,27 @@ dependencies = [
 name = "verifier-cli"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "clap",
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "verifier-challenges",
  "verifier-core",
+ "verifier-differential",
+ "verifier-fabric",
+ "verifier-guest",
+ "verifier-planner",
+ "verifier-receipts",
 ]
 
 [[package]]
@@ -2783,7 +2803,17 @@ dependencies = [
 name = "verifier-mcp"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "verifier-challenges",
+ "verifier-cli",
  "verifier-core",
+ "verifier-receipts",
 ]
 
 [[package]]
