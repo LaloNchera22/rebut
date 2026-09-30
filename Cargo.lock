@@ -2816,6 +2816,7 @@ dependencies = [
  "verifier-guest",
  "verifier-planner",
  "verifier-receipts",
+ "verifier-reputation",
 ]
 
 [[package]]

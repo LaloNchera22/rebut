@@ -1,6 +1,6 @@
 [package]
 name = "verifier-cli"
-description = "`verifier`: run the public checks locally, recompute seeds, regenerate challenges, verify receipts."
+description = "`verifier`: run the public checks locally, recompute seeds, regenerate challenges, verify receipts and anonymous credentials."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,6 +17,7 @@ verifier-fabric.workspace = true
 verifier-differential.workspace = true
 verifier-challenges.workspace = true
 verifier-receipts.workspace = true
+verifier-reputation.workspace = true
 verifier-guest = { path = "../guest", default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true

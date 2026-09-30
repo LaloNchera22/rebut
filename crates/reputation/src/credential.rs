@@ -355,8 +355,14 @@ impl Nullifier {
     }
 }
 
+impl Serialize for Nullifier {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
+    }
+}
+
 /// What a verifier learns from a valid presentation — and nothing more.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VerifiedPresentation {
     /// Disclosed attributes, sorted by index.
     pub disclosed: Vec<(usize, Attribute)>,
