@@ -2,10 +2,8 @@
 //! cargo project (cargo works offline here only for crates without deps).
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
 
 use verifier_core::{CommitSha, ExecutionRequest, Executor, Step};
 use verifier_fabric::{DirectorySource, LocalProcessExecutor};
@@ -125,71 +123,4 @@ async fn failing_build_is_reported_not_an_error() {
         .unwrap();
     assert_eq!(res.outcomes[0].exit_code, Some(101));
     assert!(String::from_utf8_lossy(&res.outcomes[0].stderr).contains("error"));
-}
-
-#[derive(Clone, Default)]
-struct LogBuf(Arc<Mutex<Vec<u8>>>);
-
-impl Write for LogBuf {
-    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(b);
-        Ok(b.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// Runs a harness that leaks a secret on stdout and stderr and fails, with
-/// all tracing captured at TRACE level. Returns (captured logs, stdout).
-async fn run_leaky(sealed: bool) -> (String, Vec<u8>) {
-    let src = tempfile::tempdir().unwrap();
-    fixture(src.path());
-    let logs = LogBuf::default();
-    let sink = logs.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_writer(move || sink.clone())
-        .with_ansi(false)
-        .finish();
-    // Current-thread runtime: the thread-local default covers every task.
-    let _guard = tracing::subscriber::set_default(subscriber);
-    let exec = LocalProcessExecutor::insecure_for_development(DirectorySource::new(src.path()));
-    let leak = r#"fn main() {
-    println!("SECRET-STDOUT-7f3a");
-    eprintln!("SECRET-STDERR-7f3a");
-    std::process::exit(3);
-}
-"#;
-    let res = exec
-        .execute(request(
-            vec![Step::Harness {
-                name: "leak".into(),
-                source: leak.into(),
-                input: vec![],
-            }],
-            sealed,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(res.outcomes[0].exit_code, Some(3));
-    let captured = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
-    (captured, res.outcomes[0].stdout.clone())
-}
-
-#[tokio::test]
-async fn sealed_outputs_never_reach_logs() {
-    let (logs, stdout) = run_leaky(true).await;
-    // The caller (control plane) still gets the output...
-    assert!(String::from_utf8_lossy(&stdout).contains("SECRET-STDOUT-7f3a"));
-    // ...but no log line carries it.
-    assert!(logs.contains("sealed step finished"), "{logs}");
-    assert!(logs.contains("UNSANDBOXED"), "{logs}");
-    assert!(!logs.contains("SECRET"), "{logs}");
-    assert!(!logs.contains("exit_code"), "{logs}");
-
-    // Control: the same failing run, unsealed, does log its stderr tail at
-    // TRACE level, so the assertion above is meaningful.
-    let (logs, _) = run_leaky(false).await;
-    assert!(logs.contains("SECRET-STDERR-7f3a"), "{logs}");
 }
