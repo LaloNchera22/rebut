@@ -8,7 +8,7 @@ use verifier_challenges::drand::{self, BeaconSource};
 use verifier_challenges::spec;
 use verifier_core::{CommitSha, DrandBeacon, Seed, GENERATOR_VERSION};
 use verifier_differential::harness::encode_case;
-use verifier_receipts::{verify_envelope, Envelope, LogEntry, Statement};
+use verifier_receipts::{verify_receipt_with_policy, Envelope, LogEntry, ReceiptPolicy, Statement};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SeedInfo {
@@ -101,7 +101,9 @@ pub fn verify_receipt(
     key: &VerifyingKey,
     entry: Option<&LogEntry>,
 ) -> anyhow::Result<ReceiptCheck> {
-    let statement = verify_envelope(envelope, key)?;
+    // Policy check rather than a bare signature check: a receipt claiming a
+    // TEE signer is not accepted (or labeled) as operator-signed.
+    let verified = verify_receipt_with_policy(envelope, &ReceiptPolicy::operator(*key))?;
     let log_index = match entry {
         None => None,
         Some(e) => {
@@ -117,10 +119,9 @@ pub fn verify_receipt(
         }
     };
     Ok(ReceiptCheck {
-        statement,
+        trust_note: verified.signer.trust_note(),
+        statement: verified.statement,
         log_index,
-        trust_note: "Phase 1: receipts are signed by the operator's key; you are trusting the \
-                     operator. Phase 2 moves the signer into a TEE (ADR-5).",
     })
 }
 
