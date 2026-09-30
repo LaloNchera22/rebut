@@ -13,6 +13,11 @@ path = "src/main.rs"
 [dependencies]
 verifier-core.workspace = true
 verifier-receipts.workspace = true
+verifier-planner.workspace = true
+verifier-fabric.workspace = true
+verifier-differential.workspace = true
+verifier-challenges.workspace = true
+verifier-guest = { path = "../guest", default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
 serde.workspace = true
@@ -34,4 +39,5 @@ jsonwebtoken = "9"
 subtle = "2"
 
 [dev-dependencies]
+tempfile.workspace = true
 tower.workspace = true

@@ -16,10 +16,11 @@ pub mod orchestrator;
 pub mod queue;
 pub mod store;
 pub mod webhook;
+pub mod wiring;
 pub mod worker;
 
 pub use api::{router, AppState};
-pub use config::Config;
+pub use config::{Config, ExecutorKind};
 pub use forge::{CheckRun, Conclusion, Forge};
 pub use github::GitHubForge;
 pub use orchestrator::{

@@ -1,55 +1,76 @@
 //! `verifier-control`: HTTP API + worker pool in one process.
 //!
-//! The planner, drand beacon, execution fabric and engines are wired here.
-//! Until those crates land, explicit placeholders keep the service honest:
-//! every verdict comes out `inconclusive` rather than silently passing.
+//! Wires the planner, drand beacon, execution fabric and the phase-1 engines
+//! (differential, challenges) into the orchestrator.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
-use time::OffsetDateTime;
-use verifier_control::{
-    router, run_workers, AppState, BeaconSource, Config, GitHubForge, NoSealedSpecs, Orchestrator,
-    PgQueue, PgStore, Planner, RetryPolicy, WorkerConfig, MIGRATOR,
+use verifier_challenges::DrandClient;
+use verifier_control::wiring::{
+    BaseChallenges, CheckoutPlanner, DirSealedSpecs, DrandBeaconSource, GitCheckouts, GitSource,
 };
-use verifier_core::{
-    DrandBeacon, ExecutionRequest, ExecutionResult, Executor, ImpactPlan, PullRequest,
+use verifier_control::{
+    router, run_workers, AppState, Config, ExecutorKind, GitHubForge, NoSealedSpecs, Orchestrator,
+    PgQueue, PgStore, RetryPolicy, SealedSpecSource, WorkerConfig, MIGRATOR,
+};
+use verifier_core::{Engine, ExecutionRequest, ExecutionResult, Executor};
+use verifier_differential::DifferentialEngine;
+use verifier_fabric::firecracker::jailer::JailerConfig;
+use verifier_fabric::{
+    FirecrackerConfig, FirecrackerExecutor, LocalProcessExecutor, SnapshotCache,
 };
 use verifier_receipts::{Ed25519Signer, InMemoryLog, RekorLog, Signer, TransparencyLog};
 
-/// Placeholder until the fabric is wired: refuses to run anything.
+/// `EXECUTOR=none`: refuses to run anything, so every verdict is inconclusive
+/// rather than silently passing.
 struct NoExecutor;
 
 #[async_trait::async_trait]
 impl Executor for NoExecutor {
     async fn execute(&self, _: ExecutionRequest) -> anyhow::Result<ExecutionResult> {
-        anyhow::bail!("no execution fabric configured")
+        anyhow::bail!("no execution fabric configured (set EXECUTOR)")
     }
 }
 
-/// Placeholder until the planner is wired: widen to the full suite.
-struct FullSuitePlanner;
-
-#[async_trait::async_trait]
-impl Planner for FullSuitePlanner {
-    async fn plan(&self, _: &PullRequest) -> anyhow::Result<ImpactPlan> {
-        Ok(ImpactPlan {
-            widen_to_full_suite: true,
-            ..Default::default()
-        })
-    }
-}
-
-/// Placeholder until drand is wired: runs proceed without a seed.
-struct NoBeacon;
-
-#[async_trait::async_trait]
-impl BeaconSource for NoBeacon {
-    async fn round_after(&self, _: OffsetDateTime) -> anyhow::Result<DrandBeacon> {
-        anyhow::bail!("no beacon source configured")
-    }
+async fn executor(config: &Config, checkouts: &GitCheckouts) -> anyhow::Result<Arc<dyn Executor>> {
+    let source = GitSource(checkouts.clone());
+    Ok(match config.executor {
+        ExecutorKind::None => {
+            tracing::warn!("EXECUTOR=none: no code will run; verdicts are inconclusive");
+            Arc::new(NoExecutor)
+        }
+        ExecutorKind::InsecureLocal => {
+            Arc::new(LocalProcessExecutor::insecure_for_development(source))
+        }
+        ExecutorKind::Firecracker => {
+            let fc = &config.firecracker;
+            let snapshots = match &fc.fc_snapshot_dir {
+                Some(dir) => Some(Arc::new(SnapshotCache::open(dir)?)),
+                None => None,
+            };
+            let fc_config = FirecrackerConfig {
+                jailer: JailerConfig {
+                    jailer_bin: fc.fc_jailer.clone(),
+                    firecracker_bin: fc.fc_firecracker.clone(),
+                    uid: fc.fc_uid,
+                    gid: fc.fc_gid,
+                    chroot_base: fc.fc_chroot_base.clone(),
+                    cgroup_root: fc.fc_cgroup_root.clone(),
+                    seccomp_filter: fc.fc_seccomp_filter.clone(),
+                },
+                kernel: fc.fc_kernel.clone(),
+                rootfs: fc.fc_rootfs.clone(),
+                boot_args: fc.fc_boot_args.clone(),
+                scratch_mib: fc.fc_scratch_mib,
+                toolchain: fc.fc_toolchain.clone(),
+                boot_grace: Duration::from_secs(30),
+            };
+            Arc::new(FirecrackerExecutor::new(fc_config, source, snapshots).await?)
+        }
+    })
 }
 
 #[tokio::main]
@@ -95,16 +116,33 @@ async fn main() -> anyhow::Result<()> {
     ));
     let store = Arc::new(PgStore::new(pool));
 
+    let checkouts = GitCheckouts::new(&config.checkout_dir);
+    let drand = match &config.drand_url {
+        Some(url) => DrandClient::new(url, verifier_challenges::drand::QUICKNET_CHAIN_HASH)?,
+        None => DrandClient::quicknet()?,
+    };
+    let sealed: Arc<dyn SealedSpecSource> = match &config.sealed_specs_dir {
+        Some(dir) => Arc::new(DirSealedSpecs(dir.clone())),
+        None => Arc::new(NoSealedSpecs),
+    };
+    let engines: Vec<Arc<dyn Engine>> = vec![
+        Arc::new(DifferentialEngine::new()),
+        Arc::new(BaseChallenges(checkouts.clone())),
+    ];
+
     let orchestrator = Arc::new(Orchestrator {
-        engines: vec![],
-        executor: Arc::new(NoExecutor),
+        engines,
+        executor: executor(&config, &checkouts).await?,
         store: store.clone(),
         signer,
         log: log.clone(),
         forge,
-        planner: Arc::new(FullSuitePlanner),
-        beacon: Arc::new(NoBeacon),
-        sealed: Arc::new(NoSealedSpecs),
+        planner: Arc::new(CheckoutPlanner(checkouts.clone())),
+        beacon: Arc::new(DrandBeaconSource {
+            source: drand,
+            max_wait: Duration::from_secs(30),
+        }),
+        sealed,
         public_url: config.public_url.clone(),
     });
 

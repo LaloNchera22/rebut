@@ -38,6 +38,72 @@ pub struct Config {
     pub job_lease_secs: u64,
     #[arg(long, env = "JOB_MAX_ATTEMPTS", default_value_t = 3)]
     pub job_max_attempts: u32,
+    /// Where untrusted code runs. `none` refuses to run anything (every
+    /// verdict is inconclusive); `insecure-local` runs it UNSANDBOXED on this
+    /// host and exists only for development.
+    #[arg(long, env = "EXECUTOR", value_enum, default_value = "none")]
+    pub executor: ExecutorKind,
+    /// Cache of source checkouts (read-only use on the host).
+    #[arg(long, env = "CHECKOUT_DIR", default_value = "/var/lib/rebut/checkouts")]
+    pub checkout_dir: PathBuf,
+    /// Maintainers' sealed challenge specs: `<dir>/<owner>/<repo>/*.toml`.
+    #[arg(long, env = "SEALED_SPECS_DIR")]
+    pub sealed_specs_dir: Option<PathBuf>,
+    /// drand relay; defaults to the League of Entropy quicknet endpoint.
+    #[arg(long, env = "DRAND_URL")]
+    pub drand_url: Option<String>,
+    #[command(flatten)]
+    pub firecracker: FirecrackerArgs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ExecutorKind {
+    None,
+    Firecracker,
+    InsecureLocal,
+}
+
+/// Required when `EXECUTOR=firecracker` (ADR-4: bare metal with KVM).
+#[derive(Debug, Clone, clap::Args)]
+pub struct FirecrackerArgs {
+    #[arg(long, env = "FC_JAILER", default_value = "/usr/local/bin/jailer")]
+    pub fc_jailer: PathBuf,
+    #[arg(
+        long,
+        env = "FC_FIRECRACKER",
+        default_value = "/usr/local/bin/firecracker"
+    )]
+    pub fc_firecracker: PathBuf,
+    #[arg(long, env = "FC_KERNEL", default_value = "/var/lib/rebut/vmlinux")]
+    pub fc_kernel: PathBuf,
+    #[arg(long, env = "FC_ROOTFS", default_value = "/var/lib/rebut/rootfs.ext4")]
+    pub fc_rootfs: PathBuf,
+    #[arg(
+        long,
+        env = "FC_BOOT_ARGS",
+        default_value = "console=ttyS0 reboot=k panic=1 pci=off"
+    )]
+    pub fc_boot_args: String,
+    #[arg(long, env = "FC_UID", default_value_t = 10000)]
+    pub fc_uid: u32,
+    #[arg(long, env = "FC_GID", default_value_t = 10000)]
+    pub fc_gid: u32,
+    #[arg(long, env = "FC_CHROOT_BASE", default_value = "/srv/jailer")]
+    pub fc_chroot_base: PathBuf,
+    #[arg(
+        long,
+        env = "FC_CGROUP_ROOT",
+        default_value = "/sys/fs/cgroup/firecracker"
+    )]
+    pub fc_cgroup_root: PathBuf,
+    #[arg(long, env = "FC_SECCOMP_FILTER")]
+    pub fc_seccomp_filter: Option<PathBuf>,
+    #[arg(long, env = "FC_SCRATCH_MIB", default_value_t = 16384)]
+    pub fc_scratch_mib: u64,
+    #[arg(long, env = "FC_TOOLCHAIN", default_value = "stable")]
+    pub fc_toolchain: String,
+    #[arg(long, env = "FC_SNAPSHOT_DIR")]
+    pub fc_snapshot_dir: Option<PathBuf>,
 }
 
 #[cfg(test)]
