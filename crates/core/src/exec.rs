@@ -25,6 +25,21 @@ pub enum Step {
         source: String,
         input: Vec<u8>,
     },
+    /// `cargo mutants --in-diff` scoped to `diff` (the unified diff from
+    /// base to head), with a per-mutant `timeout_secs` and `jobs` parallel
+    /// builds. On success stdout is the run's `mutants.out/outcomes.json`;
+    /// cargo-mutants' own output goes to stderr. The exit code is
+    /// cargo-mutants' (0 all caught, 2 some missed, 3 timeouts, 4 the
+    /// unmutated baseline failed).
+    Mutants {
+        diff: String,
+        timeout_secs: u64,
+        jobs: u8,
+    },
+    /// Append `source` (a `#[cfg(kani)]` proof harness) to the crate root and
+    /// run `cargo kani --harness <harness> -Z concrete-playback
+    /// --concrete-playback=print`. Stdout is Kani's stdout.
+    Kani { harness: String, source: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
