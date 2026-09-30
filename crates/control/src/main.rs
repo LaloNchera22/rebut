@@ -10,7 +10,8 @@ use anyhow::Context;
 use clap::Parser;
 use verifier_challenges::DrandClient;
 use verifier_control::wiring::{
-    BaseChallenges, CheckoutPlanner, DirSealedSpecs, DrandBeaconSource, GitCheckouts, GitSource,
+    BaseChallenges, CheckoutDiff, CheckoutPlanner, DirSealedSpecs, DrandBeaconSource, GitCheckouts,
+    GitSource,
 };
 use verifier_control::{
     router, run_workers, AppState, Config, ExecutorKind, GitHubForge, NoSealedSpecs, Orchestrator,
@@ -22,6 +23,7 @@ use verifier_fabric::firecracker::jailer::JailerConfig;
 use verifier_fabric::{
     FirecrackerConfig, FirecrackerExecutor, LocalProcessExecutor, SnapshotCache,
 };
+use verifier_mutation::MutationEngine;
 use verifier_receipts::{Ed25519Signer, InMemoryLog, RekorLog, Signer, TransparencyLog};
 
 /// `EXECUTOR=none`: refuses to run anything, so every verdict is inconclusive
@@ -128,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
     let engines: Vec<Arc<dyn Engine>> = vec![
         Arc::new(DifferentialEngine::new()),
         Arc::new(BaseChallenges(checkouts.clone())),
+        Arc::new(MutationEngine::new().with_diff_source(Arc::new(CheckoutDiff(checkouts.clone())))),
     ];
 
     let orchestrator = Arc::new(Orchestrator {

@@ -279,6 +279,15 @@ impl Orchestrator {
                     run.findings.extend(report.findings);
                     run.engines_run.push(*kind);
                 }
+                // The mutation engine only yields hypotheses (ADR-6); its
+                // failing can't hide a finding, so it never costs the
+                // contributor an inconclusive verdict.
+                Ok(Err(e)) if *kind == EngineKind::Mutation => {
+                    tracing::warn!(error = %format!("{e:#}"), "mutation engine failed");
+                }
+                Err(_) if *kind == EngineKind::Mutation => {
+                    tracing::warn!("mutation engine ran out of VM budget");
+                }
                 Ok(Err(e)) => run
                     .inconclusive
                     .push(format!("{kind} engine failed: {e:#}")),
@@ -677,6 +686,38 @@ mod tests {
             fx.forge.checks.lock().unwrap()[0].conclusion,
             Conclusion::Neutral
         );
+    }
+
+    struct FailingEngine(EngineKind);
+
+    #[async_trait::async_trait]
+    impl Engine for FailingEngine {
+        fn kind(&self) -> EngineKind {
+            self.0
+        }
+        async fn run(&self, _: &EngineContext) -> anyhow::Result<EngineReport> {
+            anyhow::bail!("tool missing in the VM")
+        }
+    }
+
+    #[tokio::test]
+    async fn failing_mutation_engine_is_verdict_neutral() {
+        let policy = "engines = [\"mutation\", \"differential\"]\n";
+        let fx = fixture(
+            vec![
+                Arc::new(FailingEngine(EngineKind::Mutation)),
+                Arc::new(BurnEngine(EngineKind::Differential, 1)),
+            ],
+            &[('a', POLICY_PATH, policy)],
+        );
+        let out = fx.orch.process(&job().await).await.unwrap();
+        assert_eq!(out.status, VerdictStatus::Pass);
+        let fx = fixture(
+            vec![Arc::new(FailingEngine(EngineKind::Formal))],
+            &[('a', POLICY_PATH, "engines = [\"formal\"]\n")],
+        );
+        let out = fx.orch.process(&job().await).await.unwrap();
+        assert_eq!(out.status, VerdictStatus::Inconclusive);
     }
 
     #[tokio::test]

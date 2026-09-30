@@ -2707,6 +2707,7 @@ dependencies = [
  "verifier-differential",
  "verifier-fabric",
  "verifier-guest",
+ "verifier-mutation",
  "verifier-planner",
  "verifier-receipts",
 ]
@@ -2768,6 +2769,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
  "syn 2.0.119",
  "thiserror",
  "tokio",
