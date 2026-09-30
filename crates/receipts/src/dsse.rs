@@ -9,7 +9,7 @@ use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, Verifying
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::Statement;
+use crate::{SignerIdentity, Statement};
 
 pub const PAYLOAD_TYPE_IN_TOTO: &str = "application/vnd.in-toto+json";
 
@@ -40,6 +40,10 @@ pub trait Signer: Send + Sync {
     fn public_key(&self) -> VerifyingKey;
     fn key_id(&self) -> String {
         key_id(&self.public_key())
+    }
+    /// What kind of key this is; recorded in every statement it signs.
+    fn identity(&self) -> SignerIdentity {
+        SignerIdentity::OperatorKey
     }
     async fn sign(&self, message: &[u8]) -> anyhow::Result<Vec<u8>>;
 }
@@ -116,8 +120,12 @@ impl Envelope {
         })
     }
 
+    /// Signs `st` with its `predicate.signer` set to `signer.identity()`
+    /// (whatever `st` carried is replaced).
     pub async fn sign_statement(st: &Statement, signer: &dyn Signer) -> anyhow::Result<Envelope> {
-        let payload = serde_json::to_vec(st)?;
+        let mut st = st.clone();
+        st.predicate.signer = signer.identity();
+        let payload = serde_json::to_vec(&st)?;
         Self::sign(PAYLOAD_TYPE_IN_TOTO, &payload, signer).await
     }
 
@@ -129,6 +137,11 @@ impl Envelope {
 /// Verify that `env` carries a valid signature by `key` over an in-toto
 /// payload, and return the decoded statement. Signatures by other keys are
 /// ignored; at least one must come from `key`.
+///
+/// This trusts `key` as given and does **not** evaluate the statement's
+/// [`SignerIdentity`] or attestation: a `tee` receipt checked this way proves
+/// no more than an operator-key one. Use
+/// [`verify_receipt_with_policy`](crate::verify_receipt_with_policy) for that.
 pub fn verify_envelope(env: &Envelope, key: &VerifyingKey) -> anyhow::Result<Statement> {
     if env.payload_type != PAYLOAD_TYPE_IN_TOTO {
         bail!("unexpected payloadType {:?}", env.payload_type);
