@@ -1,26 +1,28 @@
 [package]
-name = "verifier-control"
+name = "rebut-control"
 description = "Control plane: GitHub webhooks, Postgres job queue, orchestration, receipts and API."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+publish = false
 
 [[bin]]
-name = "verifier-control"
+name = "rebut-control"
 path = "src/main.rs"
 
 [dependencies]
-verifier-core.workspace = true
-verifier-receipts.workspace = true
-verifier-planner.workspace = true
-verifier-fabric.workspace = true
-verifier-differential.workspace = true
-verifier-challenges.workspace = true
-verifier-mutation.workspace = true
-verifier-formal.workspace = true
-verifier-adversary.workspace = true
-verifier-guest = { path = "../guest", default-features = false }
+rebut-core.workspace = true
+rebut-receipts.workspace = true
+rebut-planner.workspace = true
+rebut-fabric.workspace = true
+rebut-differential.workspace = true
+rebut-challenges.workspace = true
+rebut-mutation.workspace = true
+rebut-formal.workspace = true
+rebut-adversary.workspace = true
+rebut-guest = { path = "../guest", version = "0.1.0", default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
 serde.workspace = true

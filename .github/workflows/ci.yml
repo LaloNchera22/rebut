@@ -42,3 +42,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
+
+  # rebut checks its own pull requests with the local action, built from the
+  # PR's source (no release needed). Mark mode: findings are reported in the
+  # job summary and never fail the build.
+  rebut:
+    name: rebut (mark mode)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./
+        with:
+          version: source
+          fail-on-findings: "false"

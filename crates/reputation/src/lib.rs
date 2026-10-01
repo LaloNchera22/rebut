@@ -6,7 +6,7 @@
 //!   digest of the signed receipt that attests the verification. Every edge
 //!   points at a receipt anyone can fetch from the transparency log and
 //!   re-verify, so reputation is derived from evidence, not from our say-so.
-//! * [`credential`]: anonymous credentials (ADR-8). The verifier issues a BBS
+//! * [`credential`]: anonymous credentials (ADR-8). Rebut issues a BBS
 //!   credential over attributes derived from the graph, and the contributor
 //!   proves "I have ≥ N verified merges, none reverted" to a new project
 //!   without revealing who they are, with a per-scope nullifier. The
@@ -17,8 +17,8 @@ pub mod credential;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rebut_core::Digest;
 use serde::{Deserialize, Serialize};
-use verifier_core::Digest;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReputationError {

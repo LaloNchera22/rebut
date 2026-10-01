@@ -1,15 +1,15 @@
 use super::*;
-use std::sync::Mutex;
-use verifier_core::{
+use rebut_core::{
     ChangeKind, Digest, EnforcementMode, HypothesisSource, ImpactPlan, PullRequest, RepoId,
     Verdict, VerdictStatus,
 };
+use std::sync::Mutex;
 
 const HEAD: &str = "https://example.invalid/head.git";
 const BASE: &str = "https://example.invalid/base.git";
 const TARGET: &str = "mylib::parse::header";
 
-/// What the harness prints after `verifier:start`, and its exit code, for
+/// What the harness prints after `rebut:start`, and its exit code, for
 /// (is_base, input, differential harness, index of this call).
 type Behavior = fn(bool, &[u8], bool, usize) -> (Option<i32>, Vec<u8>);
 
@@ -26,9 +26,9 @@ fn default_behavior(is_base: bool, input: &[u8], diff: bool, _: usize) -> (Optio
         } else {
             input.len().min(4)
         };
-        out.extend_from_slice(format!("verifier:ret:{ret}\n").as_bytes());
+        out.extend_from_slice(format!("rebut:ret:{ret}\n").as_bytes());
     }
-    out.extend_from_slice(b"verifier:done\n");
+    out.extend_from_slice(b"rebut:done\n");
     (Some(0), out)
 }
 
@@ -78,7 +78,7 @@ impl Executor for FakeExec {
         let Step::Harness { input, source, .. } = &req.steps[1] else {
             anyhow::bail!("expected harness")
         };
-        let diff = source.contains("verifier:ret");
+        let diff = source.contains("rebut:ret");
         let (code, rest) = (self.behavior)(req.repo_url == BASE, input, diff, n);
         let mut stdout = START.to_vec();
         stdout.extend_from_slice(&rest);
@@ -220,7 +220,7 @@ async fn real_crash_becomes_a_finding() {
     assert_eq!(f.reproduction().input(), b"\xFF\x00");
     assert_eq!(
         f.reproduction().observed(),
-        b"exit:Some(101)\nverifier:start\n"
+        b"exit:Some(101)\nrebut:start\n"
     );
     // Head, base (is it pre-existing?), head again (is it deterministic?).
     let calls = exec.calls();
@@ -238,7 +238,7 @@ async fn panic_already_on_base_is_not_this_prs() {
         if input.first() == Some(&0xFF) {
             (Some(101), vec![])
         } else {
-            (Some(0), b"verifier:done\n".to_vec())
+            (Some(0), b"rebut:done\n".to_vec())
         }
     });
     let c = ctx(exec.clone());
@@ -251,8 +251,7 @@ async fn panic_already_on_base_is_not_this_prs() {
 
 #[tokio::test]
 async fn function_that_prints_is_not_a_panic() {
-    let exec =
-        FakeExec::new(|_, _, _, _| (Some(0), b"hello from the fn\nverifier:done\n".to_vec()));
+    let exec = FakeExec::new(|_, _, _, _| (Some(0), b"hello from the fn\nrebut:done\n".to_vec()));
     let c = ctx(exec.clone());
     let r = Adversary::default()
         .triage(vec![hyp(Some(b"x"), TARGET)], exec.as_ref(), &c)
@@ -268,7 +267,7 @@ async fn flaky_crash_is_not_a_finding() {
         if !is_base && n == 0 {
             (Some(101), vec![])
         } else {
-            (Some(0), b"verifier:done\n".to_vec())
+            (Some(0), b"rebut:done\n".to_vec())
         }
     });
     let c = ctx(exec.clone());
@@ -519,7 +518,7 @@ fn harness_shapes() {
     assert_eq!(shape, InputShape::Str);
     let src = harness_source(&sig, shape, Oracle::Differential);
     assert!(src.contains("let ret = mylib::p(&text);"));
-    assert!(src.contains("verifier:ret:{:?}"));
+    assert!(src.contains("rebut:ret:{:?}"));
     let two = FnSignature {
         args: vec!["u8".into(), "u8".into()],
         ..sig

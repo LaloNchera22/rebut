@@ -10,10 +10,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use rebut_core::RepoId;
+use rebut_receipts::TransparencyLog;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
-use verifier_core::RepoId;
-use verifier_receipts::TransparencyLog;
 
 use crate::queue::JobQueue;
 use crate::store::Store;
@@ -119,9 +119,9 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use hmac::{Hmac, Mac};
+    use rebut_core::*;
+    use rebut_receipts::{Ed25519Signer, InMemoryLog};
     use tower::ServiceExt;
-    use verifier_core::*;
-    use verifier_receipts::{Ed25519Signer, InMemoryLog};
 
     const SECRET: &[u8] = b"It's a Secret to Everybody";
 
@@ -150,7 +150,7 @@ mod tests {
             "number": 5,
             "pull_request": {
                 "number": 5,
-                "body": "```verifier-intent\nkind = \"refactor\"\n```",
+                "body": "```rebut-intent\nkind = \"refactor\"\n```",
                 "user": { "login": "contributor" },
                 "head": { "sha": "b".repeat(40), "repo": { "clone_url": "https://github.com/fork/lib.git" } },
                 "base": { "sha": "a".repeat(40), "repo": { "clone_url": "https://github.com/acme/lib.git" } }
@@ -264,7 +264,7 @@ mod tests {
             mode: EnforcementMode::Mark,
         };
         let signer = Ed25519Signer::generate();
-        let envelope = verifier_receipts::Envelope::sign("t", b"{}", &signer)
+        let envelope = rebut_receipts::Envelope::sign("t", b"{}", &signer)
             .await
             .unwrap();
         let id = Uuid::new_v4();

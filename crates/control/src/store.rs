@@ -2,12 +2,12 @@
 
 use std::sync::Mutex;
 
+use rebut_core::{RepoId, Verdict};
+use rebut_receipts::Envelope;
 use serde::{Deserialize, Serialize};
 use sqlx::{types::Json, PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
-use verifier_core::{RepoId, Verdict};
-use verifier_receipts::Envelope;
 
 /// One finished run. `id` names both the verdict and its receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

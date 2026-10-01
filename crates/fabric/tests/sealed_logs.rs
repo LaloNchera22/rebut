@@ -12,8 +12,8 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-use verifier_core::{CommitSha, ExecutionRequest, Executor, Step};
-use verifier_fabric::{DirectorySource, LocalProcessExecutor};
+use rebut_core::{CommitSha, ExecutionRequest, Executor, Step};
+use rebut_fabric::{DirectorySource, LocalProcessExecutor};
 
 #[derive(Clone, Default)]
 struct LogBuf(Arc<Mutex<Vec<u8>>>);

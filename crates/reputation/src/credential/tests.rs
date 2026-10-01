@@ -2,7 +2,7 @@ use super::*;
 
 const DAY: u64 = SECONDS_PER_DAY;
 const SCOPE: &[u8] = b"repo:owner/name:bounty-2026-10";
-const NONCE: &[u8] = b"verifier-nonce-0001";
+const NONCE: &[u8] = b"rebut-nonce-0001";
 
 /// alice: 7 verified merges, first one on day 20_000 (+ some seconds).
 fn graph() -> TrustGraph {

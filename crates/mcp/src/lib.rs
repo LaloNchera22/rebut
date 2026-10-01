@@ -1,6 +1,6 @@
 //! MCP server for agents.
 //!
-//! Tools mirror the `verifier` CLI: run the public checks on a local
+//! Tools mirror the `rebut` CLI: run the public checks on a local
 //! checkout, recompute a seed, regenerate public challenges, verify a receipt,
 //! and fetch a PR's contributor report from a running control plane.
 //!
@@ -11,15 +11,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
+use rebut::audit::parse_public_key;
+use rebut::{derive_seed, regenerate_challenges, verify_local, verify_receipt, LocalOptions};
+use rebut_challenges::BeaconSource;
+use rebut_core::{CommitSha, DrandBeacon, EngineKind, Seed};
+use rebut_receipts::{Envelope, LogEntry};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use verifier_challenges::BeaconSource;
-use verifier_cli::audit::parse_public_key;
-use verifier_cli::{
-    derive_seed, regenerate_challenges, verify_local, verify_receipt, LocalOptions,
-};
-use verifier_core::{CommitSha, DrandBeacon, EngineKind, Seed};
-use verifier_receipts::{Envelope, LogEntry};
 
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -39,7 +37,9 @@ fn tools() -> Value {
                     "path": {"type": "string", "description": "Path inside the git repository"},
                     "base": {"type": "string", "default": "main"},
                     "offline": {"type": "boolean", "default": false, "description": "Use a local pseudo-beacon instead of drand"},
-                    "engines": {"type": "array", "items": {"enum": ["differential", "challenges"]}}
+                    "engines": {"type": "array", "items": {"enum": ["differential", "challenges"]}},
+                    "all_public": {"type": "boolean", "default": false, "description": "Compare every public function of the crate, not only changed ones (automatic when only Cargo.toml/Cargo.lock changed, e.g. after `cargo update`)"},
+                    "max_functions": {"type": "integer", "minimum": 1, "description": "Cap on the functions compared (default 32 changed, 200 public)"}
                 },
                 "required": ["path"]
             }
@@ -59,7 +59,7 @@ fn tools() -> Value {
         },
         {
             "name": "regenerate_challenges",
-            "description": "Regenerate the public challenge inputs a PR was tested with, from the base branch's .verifier/challenges.toml and the seed inputs.",
+            "description": "Regenerate the public challenge inputs a PR was tested with, from the base branch's .rebut/challenges.toml and the seed inputs.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -87,7 +87,7 @@ fn tools() -> Value {
         },
         {
             "name": "get_report",
-            "description": "Fetch the contributor report for a pull request from a verifier control plane. Sealed challenge failures appear only as categories.",
+            "description": "Fetch the contributor report for a pull request from a Rebut control plane. Sealed challenge failures appear only as categories.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -110,6 +110,9 @@ struct VerifyLocalArgs {
     #[serde(default)]
     offline: bool,
     engines: Option<Vec<EngineKind>>,
+    #[serde(default)]
+    all_public: bool,
+    max_functions: Option<usize>,
 }
 
 fn default_base() -> String {
@@ -184,8 +187,8 @@ impl Server {
             "initialize" => Ok(json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "verifier-mcp", "version": env!("CARGO_PKG_VERSION")},
-                "instructions": "Tools to verify Rust changes and audit the verifier. \
+                "serverInfo": {"name": "rebut-mcp", "version": env!("CARGO_PKG_VERSION")},
+                "instructions": "Tools to verify Rust changes and audit the Rebut. \
                     Only findings with a concrete reproduction are evidence.",
             })),
             "ping" => Ok(json!({})),
@@ -224,6 +227,8 @@ impl Server {
                         base: a.base,
                         beacon: (!a.offline).then(|| self.beacon.clone()),
                         engines: a.engines,
+                        all_public: a.all_public,
+                        max_functions: a.max_functions,
                     },
                 )
                 .await?;
@@ -273,7 +278,7 @@ impl Server {
         }
     }
 
-    async fn seed(&self, a: &SeedArgs) -> anyhow::Result<verifier_cli::SeedInfo> {
+    async fn seed(&self, a: &SeedArgs) -> anyhow::Result<rebut::SeedInfo> {
         let commit = CommitSha::new(&a.commit).map_err(anyhow::Error::msg)?;
         derive_seed(&commit, a.round, a.beacon.clone(), self.beacon.as_ref()).await
     }
@@ -286,12 +291,12 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use verifier_challenges::FixedBeacon;
+    use rebut_challenges::FixedBeacon;
 
     fn server() -> Server {
         // randomness = sha256(signature) for signature = 0xab * 48.
         let signature = "ab".repeat(48);
-        let randomness = verifier_core::Digest::of(&[0xab; 48]).to_hex();
+        let randomness = rebut_core::Digest::of(&[0xab; 48]).to_hex();
         Server::new(Arc::new(FixedBeacon(DrandBeacon {
             chain_hash: "c".into(),
             round: 9,

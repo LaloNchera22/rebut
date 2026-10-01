@@ -15,7 +15,7 @@
 //! * BBS signatures and proofs (`draft-irtf-cfrg-bbs-signatures`);
 //! * blind issuance (`draft-irtf-cfrg-bbs-blind-signatures`);
 //! * pseudonyms, i.e. per-verifier linkability
-//!   (`draft-irtf-cfrg-bbs-per-verifier-linkability`).
+//!   (`draft-irtf-cfrg-bbs-per-rebut-linkability`).
 //!
 //! Nothing in this module does curve arithmetic. It fixes the credential
 //! schema, encodes attributes as BBS messages, and checks every untrusted
@@ -99,9 +99,9 @@
 //! (SP1 / RISC Zero) over the receipts themselves, and only when a concrete
 //! need appears.
 
+use rebut_core::Digest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use verifier_core::Digest;
 use zkryptium::bbsplus::commitment::BlindFactor;
 use zkryptium::bbsplus::keys::{BBSplusPublicKey, BBSplusSecretKey};
 use zkryptium::bbsplus::pseudonym::{BBSplusPseudonym, PseudonymSecret};

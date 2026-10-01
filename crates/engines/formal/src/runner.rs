@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use verifier_core::{EngineContext, ExecutionRequest, Step};
+use rebut_core::{EngineContext, ExecutionRequest, Step};
 
 use crate::codegen::GeneratedHarness;
 use crate::kani::{parse_kani_output, KaniOutcome};
@@ -11,7 +11,7 @@ use crate::{KaniRun, KaniRunner};
 /// Longest stderr excerpt kept in a failure note.
 const STDERR_TAIL_CHARS: usize = 300;
 /// The marker the guest appends when it caps a step's output.
-const TRUNCATION_MARKER: &str = "[verifier: output truncated";
+const TRUNCATION_MARKER: &str = "[rebut: output truncated";
 
 /// The request that runs one proof harness against the PR head. Kani
 /// compiles the crate itself, so there is no separate `Build` step; the proof

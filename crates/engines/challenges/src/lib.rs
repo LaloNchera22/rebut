@@ -4,7 +4,7 @@
 //! generators and an oracle. Inputs are generated from the PR's drand-derived
 //! [`Seed`] (see [`drand`]), so they are unpredictable before the push and
 //! reproducible by anyone afterwards. Public specs come from
-//! `.verifier/challenges.toml` on the base branch; sealed specs are supplied
+//! `.rebut/challenges.toml` on the base branch; sealed specs are supplied
 //! privately, must match a commitment in the policy, run in sealed requests,
 //! and produce [`Visibility::Sealed`] findings.
 //!
@@ -22,18 +22,18 @@ pub mod spec;
 use std::path::Path;
 
 use anyhow::Context;
-use verifier_core::{
+use rebut_core::{
     Digest, Engine, EngineContext, EngineKind, EngineReport, ExecutionResult, Finding, Hypothesis,
     HypothesisSource, Reproduction, Step, StepOutcome, Visibility,
 };
-use verifier_differential::harness::{self, HarnessOutput, START_MARKER};
-use verifier_differential::run::{consistent_success, execute, outcome, Side};
+use rebut_differential::harness::{self, HarnessOutput, START_MARKER};
+use rebut_differential::run::{consistent_success, execute, outcome, Side};
 
 pub use drand::{BeaconSource, DrandClient, FixedBeacon};
 pub use spec::{Challenge, SpecError};
 
 /// Where public specs live in the base checkout.
-pub const PUBLIC_SPECS_PATH: &str = ".verifier/challenges.toml";
+pub const PUBLIC_SPECS_PATH: &str = ".rebut/challenges.toml";
 
 #[derive(Debug, Clone)]
 pub struct ChallengesConfig {
@@ -53,7 +53,7 @@ impl Default for ChallengesConfig {
 
 #[derive(Debug, Clone, Default)]
 pub struct ChallengesEngine {
-    /// Contents of `.verifier/challenges.toml` from the base branch.
+    /// Contents of `.rebut/challenges.toml` from the base branch.
     public_specs: Option<String>,
     config: ChallengesConfig,
 }

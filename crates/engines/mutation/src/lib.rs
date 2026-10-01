@@ -5,7 +5,7 @@
 //! not a bug: nothing was shown to be wrong, only unobserved. Per ADR-6 a
 //! surviving mutant is therefore a [`Hypothesis`] (source
 //! [`HypothesisSource::Generator`]), reported in
-//! [`EngineReport::unreproduced`], and never a [`verifier_core::Finding`].
+//! [`EngineReport::unreproduced`], and never a [`rebut_core::Finding`].
 //!
 //! # How it runs
 //!
@@ -60,11 +60,11 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use serde::Deserialize;
-use verifier_core::{
+use rebut_core::{
     Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest, FnSignature, Hypothesis,
     HypothesisSource, Step,
 };
+use serde::Deserialize;
 
 /// Logged when the engine has neither supplied outcomes nor a diff source.
 pub const NO_SOURCE_NOTE: &str = "mutation engine: no diff source and no outcomes supplied; \
@@ -606,13 +606,13 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl verifier_core::Executor for FakeExec {
+    impl rebut_core::Executor for FakeExec {
         async fn execute(
             &self,
             req: ExecutionRequest,
-        ) -> anyhow::Result<verifier_core::ExecutionResult> {
+        ) -> anyhow::Result<rebut_core::ExecutionResult> {
             self.requests.lock().unwrap().push(req.clone());
-            let outcomes = vec![verifier_core::StepOutcome {
+            let outcomes = vec![rebut_core::StepOutcome {
                 step_index: 0,
                 exit_code: self.exit_code,
                 timed_out: self.timed_out,
@@ -620,11 +620,11 @@ mod tests {
                 stderr: b"cargo-mutants human output".to_vec(),
                 duration_ms: 42_300,
             }];
-            Ok(verifier_core::ExecutionResult {
+            Ok(rebut_core::ExecutionResult {
                 request_id: req.id,
-                transcript: verifier_core::ExecutionResult::compute_transcript(&req, &outcomes),
+                transcript: rebut_core::ExecutionResult::compute_transcript(&req, &outcomes),
                 outcomes,
-                environment: verifier_core::Digest::of(b"env"),
+                environment: rebut_core::Digest::of(b"env"),
             })
         }
     }
@@ -644,19 +644,19 @@ mod tests {
         -    if n < 4 {\n\
         +    if n < 8 {\n";
 
-    fn head_sha() -> verifier_core::CommitSha {
-        verifier_core::CommitSha::new("b".repeat(40)).unwrap()
+    fn head_sha() -> rebut_core::CommitSha {
+        rebut_core::CommitSha::new("b".repeat(40)).unwrap()
     }
 
-    fn ctx(executor: Arc<dyn verifier_core::Executor>) -> EngineContext {
+    fn ctx(executor: Arc<dyn rebut_core::Executor>) -> EngineContext {
         EngineContext {
-            pr: verifier_core::PullRequest {
-                repo: verifier_core::RepoId {
+            pr: rebut_core::PullRequest {
+                repo: rebut_core::RepoId {
                     owner: "o".into(),
                     name: "n".into(),
                 },
                 number: 1,
-                base_sha: verifier_core::CommitSha::new("a".repeat(40)).unwrap(),
+                base_sha: rebut_core::CommitSha::new("a".repeat(40)).unwrap(),
                 head_sha: head_sha(),
                 head_clone_url: "https://example.test/fork.git".into(),
                 base_clone_url: "https://example.test/upstream.git".into(),
@@ -665,7 +665,7 @@ mod tests {
             },
             intent: Default::default(),
             policy: Default::default(),
-            plan: verifier_core::ImpactPlan {
+            plan: rebut_core::ImpactPlan {
                 changed_files: vec!["src/parse.rs".into()],
                 ..Default::default()
             },

@@ -39,11 +39,11 @@ pub use codegen::{
     Scalar,
 };
 pub use kani::{check_shape, parse_kani_output, KaniOutcome};
-pub use runner::{kani_request, FabricKaniRunner};
-use verifier_core::{
+use rebut_core::{
     Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest, ExecutionResult, Finding,
     FnSignature, Hypothesis, HypothesisSource, IntentManifest, Reproduction, Step, Visibility,
 };
+pub use runner::{kani_request, FabricKaniRunner};
 
 /// Proposes invariants for a function. Implementations are typically LLM
 /// clients; their output is untrusted and only ever becomes a [`Hypothesis`].
@@ -116,9 +116,8 @@ pub enum ReplayOutcome {
     Unreproduced(String),
 }
 
-const START: &[u8] = b"verifier:start\n";
-const EXPECTED: &[u8] =
-    b"exit:Some(0)\nverifier:start\nverifier:returned\nverifier:invariant:held\n";
+const START: &[u8] = b"rebut:start\n";
+const EXPECTED: &[u8] = b"exit:Some(0)\nrebut:start\nrebut:returned\nrebut:invariant:held\n";
 
 /// The request that replays `values` against the PR head.
 pub fn replay_request(
@@ -171,7 +170,7 @@ pub fn judge_replay(
     if run.timed_out {
         return unrepro("replay timed out");
     }
-    if run.stdout.starts_with(b"verifier:assumption-violated\n") {
+    if run.stdout.starts_with(b"rebut:assumption-violated\n") {
         return unrepro("counterexample violates the invariant's preconditions");
     }
     if !run.stdout.starts_with(START) {
@@ -180,8 +179,8 @@ pub fn judge_replay(
     let Some(repro) = Reproduction::confirm(result, 1, input, EXPECTED.to_vec()) else {
         return unrepro("invariant held on the real binary; Kani result not reproduced");
     };
-    let violated = contains(repro.observed(), b"verifier:invariant:violated");
-    if !violated && contains(repro.observed(), b"verifier:returned\n") {
+    let violated = contains(repro.observed(), b"rebut:invariant:violated");
+    if !violated && contains(repro.observed(), b"rebut:returned\n") {
         // The function returned; the proposed property itself panicked
         // (overflow, unwrap...). That is the guess's fault, not the code's.
         return unrepro("invariant expression failed after the function returned");
@@ -364,8 +363,8 @@ impl Engine for FormalEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rebut_core::{CommitSha, Digest, Executor, PullRequest, RepoId, StepOutcome};
     use std::sync::Mutex;
-    use verifier_core::{CommitSha, Digest, Executor, PullRequest, RepoId, StepOutcome};
 
     /// Fake fabric: "runs" the replay by evaluating a Rust closure standing in
     /// for the compiled harness.
@@ -418,14 +417,14 @@ mod tests {
             .collect();
         let (x, lo, hi) = (v[0], v[1], v[2]);
         if lo > hi {
-            return (0, b"verifier:assumption-violated\n".to_vec());
+            return (0, b"rebut:assumption-violated\n".to_vec());
         }
         let ret = if x > hi { hi } else { x };
         let held = ret >= lo && ret <= hi;
         let line = if held { "held" } else { "violated" };
         (
             0,
-            format!("verifier:start\nverifier:returned\nverifier:invariant:{line}\n").into_bytes(),
+            format!("rebut:start\nrebut:returned\nrebut:invariant:{line}\n").into_bytes(),
         )
     }
 
@@ -483,7 +482,7 @@ mod tests {
             },
             intent: IntentManifest::default(),
             policy: Default::default(),
-            plan: verifier_core::ImpactPlan {
+            plan: rebut_core::ImpactPlan {
                 changed_functions: vec![FnSignature {
                     path: "mylib::math::clamp".into(),
                     args: vec!["i32".into(), "i32".into(), "i32".into()],
@@ -530,7 +529,7 @@ mod tests {
         assert!(!r.findings[0].is_actionable());
         // Under a declared refactor, the same counterexample counts.
         let mut c = ctx(e.clone());
-        c.intent.kind = verifier_core::ChangeKind::Refactor;
+        c.intent.kind = rebut_core::ChangeKind::Refactor;
         let r = engine.run(&c).await.unwrap();
         let f = &r.findings[0];
         assert_eq!(f.category, "invariant-violation");
@@ -555,7 +554,7 @@ mod tests {
         fn correct(_: &[u8]) -> (i32, Vec<u8>) {
             (
                 0,
-                b"verifier:start\nverifier:returned\nverifier:invariant:held\n".to_vec(),
+                b"rebut:start\nrebut:returned\nrebut:invariant:held\n".to_vec(),
             )
         }
         let e = exec(correct);
@@ -582,7 +581,7 @@ mod tests {
     #[tokio::test]
     async fn panic_after_start_is_a_panic_finding() {
         fn panics(_: &[u8]) -> (i32, Vec<u8>) {
-            (101, b"verifier:start\n".to_vec())
+            (101, b"rebut:start\n".to_vec())
         }
         let e = exec(panics);
         let engine = FormalEngine::new(Arc::new(FixedProposer))
@@ -597,9 +596,9 @@ mod tests {
         // The function returned; the proposed property then panicked (e.g.
         // `a0.checked_add(1).unwrap() > 0` on i32::MAX).
         fn property_panics(_: &[u8]) -> (i32, Vec<u8>) {
-            (101, b"verifier:start\nverifier:returned\n".to_vec())
+            (101, b"rebut:start\nrebut:returned\n".to_vec())
         }
-        // A precondition that panics never reaches `verifier:start`.
+        // A precondition that panics never reaches `rebut:start`.
         fn assumption_panics(_: &[u8]) -> (i32, Vec<u8>) {
             (101, b"".to_vec())
         }

@@ -1,0 +1,179 @@
+name: rebut
+description: >-
+  Check that a Rust pull request does what it claims: run base and head on the
+  same inputs, plus seeded challenges, on the disposable GitHub runner.
+author: LaloNchera22
+branding:
+  icon: check-circle
+  color: gray-dark
+
+# Usage (see examples/github-workflow.yml and the book's "GitHub Action"
+# chapter for the security caveats):
+#
+#   - uses: actions/checkout@v4
+#     with:
+#       fetch-depth: 0
+#   - uses: LaloNchera22/rebut@v0
+
+inputs:
+  base:
+    description: >-
+      Branch to compare against. Defaults to the pull request's base branch,
+      or the repository's default branch outside pull requests.
+    required: false
+    default: ${{ github.base_ref }}
+  fail-on-findings:
+    description: >-
+      "true" fails the step on findings. The default, "false", is mark mode:
+      findings are reported in the job summary and as a warning, never fail.
+    required: false
+    default: "false"
+  version:
+    description: >-
+      rebut release to install ("latest", or a tag such as "v0.1.0"). "source"
+      builds the action's own checkout with cargo instead.
+    required: false
+    default: latest
+  args:
+    description: Extra arguments for `rebut verify`, split on whitespace.
+    required: false
+    default: ""
+
+outputs:
+  report:
+    description: Path of the plain-text report.
+    value: ${{ steps.verify.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install rebut
+      shell: bash
+      env:
+        REBUT_VERSION: ${{ inputs.version }}
+        ACTION_PATH: ${{ github.action_path }}
+        REPO: LaloNchera22/rebut
+      run: |
+        set -euo pipefail
+        bin="$RUNNER_TEMP/rebut-bin"
+        mkdir -p "$bin"
+        echo "$bin" >> "$GITHUB_PATH"
+        export PATH="$bin:$PATH"
+
+        if [ "$REBUT_VERSION" = "source" ]; then
+          cargo install --locked --root "$RUNNER_TEMP/rebut-root" --path "$ACTION_PATH/crates/cli"
+          ln -sf "$RUNNER_TEMP/rebut-root/bin/rebut" "$bin/rebut"
+          rebut --version
+          exit 0
+        fi
+
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64)   target=x86_64-unknown-linux-musl ;;
+          Linux/ARM64) target=aarch64-unknown-linux-musl ;;
+          macOS/X64)   target=x86_64-apple-darwin ;;
+          macOS/ARM64) target=aarch64-apple-darwin ;;
+          *)           target="" ;;
+        esac
+
+        if [ "$REBUT_VERSION" = "latest" ]; then
+          base_url="https://github.com/$REPO/releases/latest/download"
+        else
+          base_url="https://github.com/$REPO/releases/download/$REBUT_VERSION"
+        fi
+
+        installed=false
+        if [ -n "$target" ]; then
+          asset="rebut-$target.tar.gz"
+          tmp="$(mktemp -d)"
+          if curl -fsSL --retry 3 -o "$tmp/$asset" "$base_url/$asset" \
+            && curl -fsSL --retry 3 -o "$tmp/$asset.sha256" "$base_url/$asset.sha256"; then
+            (cd "$tmp" && if command -v sha256sum >/dev/null; then sha256sum -c "$asset.sha256"; else shasum -a 256 -c "$asset.sha256"; fi)
+            tar -xzf "$tmp/$asset" -C "$tmp"
+            install -m 0755 "$tmp/rebut-$target/rebut" "$bin/rebut"
+            installed=true
+          else
+            echo "::notice::no prebuilt rebut $REBUT_VERSION for $target; falling back to cargo install"
+          fi
+        fi
+
+        if [ "$installed" = false ]; then
+          version_arg=()
+          if [ "$REBUT_VERSION" != "latest" ]; then
+            version_arg=(--version "${REBUT_VERSION#v}")
+          fi
+          cargo install rebut --locked ${version_arg[@]+"${version_arg[@]}"} --root "$RUNNER_TEMP/rebut-root"
+          ln -sf "$RUNNER_TEMP/rebut-root/bin/rebut" "$bin/rebut"
+        fi
+        rebut --version
+
+    - name: Fetch base branch
+      shell: bash
+      env:
+        BASE: ${{ inputs.base || github.event.repository.default_branch }}
+      run: |
+        set -euo pipefail
+        # The merge base needs history on both sides.
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --no-tags --unshallow origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+        else
+          git fetch --no-tags origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+        fi
+
+    - name: Fetch dependencies
+      shell: bash
+      env:
+        BASE: ${{ inputs.base || github.event.repository.default_branch }}
+      run: |
+        set -euo pipefail
+        # rebut builds with `--locked --offline`, so the crates both sides
+        # need must already be in the cargo cache. `cargo fetch` only
+        # downloads; it runs no build scripts.
+        [ -f Cargo.toml ] || exit 0
+        if [ ! -f Cargo.lock ]; then
+          echo "::error title=rebut::rebut builds with --locked; commit Cargo.lock"
+          exit 1
+        fi
+        cargo fetch --locked
+        base_tree="$RUNNER_TEMP/rebut-base-tree"
+        rm -rf "$base_tree"
+        git worktree add --detach "$base_tree" "$(git merge-base "origin/$BASE" HEAD)"
+        if [ -f "$base_tree/Cargo.toml" ] && [ -f "$base_tree/Cargo.lock" ]; then
+          (cd "$base_tree" && cargo fetch --locked)
+        fi
+        git worktree remove --force "$base_tree"
+
+    - name: rebut verify
+      id: verify
+      shell: bash
+      env:
+        BASE: ${{ inputs.base || github.event.repository.default_branch }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
+        REBUT_ARGS: ${{ inputs.args }}
+      run: |
+        set -uo pipefail
+        report="$RUNNER_TEMP/rebut-report.txt"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+        args=(verify --base "origin/$BASE")
+        if [ "$FAIL_ON_FINDINGS" = "true" ]; then
+          args+=(--fail-on-findings)
+        fi
+        read -r -a extra <<< "$REBUT_ARGS"
+        args+=(${extra[@]+"${extra[@]}"})
+
+        rebut "${args[@]}" 2>&1 | tee "$report"
+        status=${PIPESTATUS[0]}
+
+        verdict="$(grep -E '^(PASS|FLAGGED|FAIL|INCONCLUSIVE)' "$report" | tail -n 1 || true)"
+        {
+          echo "### rebut: ${verdict:-no verdict (exit $status)}"
+          echo
+          echo "Compared against \`origin/$BASE\`."
+          echo
+          echo '```text'
+          cat "$report"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+        case "$verdict" in
+          FLAGGED*|FAIL*) echo "::warning title=rebut::$verdict (see the job summary)" ;;
+        esac
+        exit "$status"

@@ -6,7 +6,11 @@
 //!   the harness can generate (integers, `bool`, `char`, strings, byte
 //!   vectors, one level of `Option`), a harness feeds deterministic inputs
 //!   (boundary values, then seeded random ones) and prints the `Debug` of the
-//!   result per case; panics are caught and printed as `panic`.
+//!   result per case; panics are caught and printed as `panic`. With
+//!   [`DiffScope::AllPublic`] (a dependency update, or asked for) every
+//!   public function the planner listed is driven too, changed or not; a
+//!   divergence in a function whose code did not change is only explained
+//!   by an intent that names it explicitly.
 //! * **Test regressions.** The planner's tests (or the full suite when the
 //!   plan widens) run on both sides; a test that passes on base and fails on
 //!   head is a regression. Tests absent on base are skipped.
@@ -40,11 +44,11 @@ pub mod harness;
 pub mod libtest;
 pub mod run;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use verifier_core::{
-    Digest, Engine, EngineContext, EngineKind, EngineReport, ExecutionResult, Finding, FnSignature,
-    Hypothesis, HypothesisSource, Reproduction, Seed, Step, Visibility,
+use rebut_core::{
+    DiffScope, Digest, Engine, EngineContext, EngineKind, EngineReport, ExecutionResult, Finding,
+    FnSignature, Hypothesis, HypothesisSource, Reproduction, Seed, Step, Visibility,
 };
 
 use harness::{ArgType, HarnessOutput};
@@ -60,6 +64,8 @@ pub struct DifferentialConfig {
     pub cases_per_fn: usize,
     /// Functions harnessed per PR (the rest are skipped).
     pub max_functions: usize,
+    /// Functions harnessed per PR with [`DiffScope::AllPublic`].
+    pub max_public_functions: usize,
     /// Divergent cases confirmed (and reported) per function.
     pub max_findings_per_fn: usize,
     /// Test regressions confirmed per PR.
@@ -73,6 +79,7 @@ impl Default for DifferentialConfig {
         DifferentialConfig {
             cases_per_fn: 64,
             max_functions: 32,
+            max_public_functions: 200,
             max_findings_per_fn: 3,
             max_test_findings: 16,
             build_profile: "dev".to_string(),
@@ -91,6 +98,20 @@ pub struct HarnessTarget {
     pub sig: FnSignature,
     pub args: Vec<ArgType>,
     pub lines: Vec<String>,
+    /// The function's own code changed (it is in `changed_functions`).
+    pub changed: bool,
+}
+
+/// The functions [`DifferentialEngine::select`] will compare.
+#[derive(Debug, Clone, Default)]
+pub struct Selection {
+    pub targets: Vec<HarnessTarget>,
+    /// With [`DiffScope::AllPublic`]: public functions left out because no
+    /// harness can call them (the planner's shape checks plus unsupported
+    /// argument types).
+    pub skipped: usize,
+    /// Harnessable functions beyond the cap, not compared.
+    pub truncated: usize,
 }
 
 impl HarnessTarget {
@@ -128,7 +149,7 @@ pub fn supported(sig: &FnSignature) -> Option<Vec<ArgType>> {
 pub fn case_seed(ctx: &EngineContext, path: &str) -> Seed {
     let root = ctx.seed.unwrap_or_else(|| {
         Seed(Digest::of_parts(&[
-            b"verifier/differential/v1",
+            b"rebut/differential/v1",
             ctx.pr.head_sha.as_str().as_bytes(),
         ]))
     });
@@ -154,26 +175,67 @@ impl DifferentialEngine {
         DifferentialEngine { config }
     }
 
-    /// Changed functions the engine will harness, with their inputs.
+    /// Functions the engine will harness, with their inputs.
     pub fn targets(&self, ctx: &EngineContext) -> Vec<HarnessTarget> {
-        ctx.plan
-            .changed_functions
-            .iter()
-            .filter_map(|sig| {
-                let args = supported(sig)?;
+        self.select(ctx).targets
+    }
+
+    /// Changed functions first, then (with [`DiffScope::AllPublic`]) the
+    /// plan's public functions, keeping those a harness can call, up to the
+    /// scope's cap.
+    pub fn select(&self, ctx: &EngineContext) -> Selection {
+        let plan = &ctx.plan;
+        let all_public = plan.scope == DiffScope::AllPublic;
+        let mut skipped = if all_public { plan.public_skipped } else { 0 };
+        let mut seen = BTreeSet::new();
+        let mut picked = Vec::new();
+        for sig in &plan.changed_functions {
+            if let Some(args) = supported(sig) {
+                if seen.insert(sig.path.as_str()) {
+                    picked.push((sig, args, true));
+                }
+            }
+        }
+        if all_public {
+            for sig in &plan.public_functions {
+                match supported(sig) {
+                    _ if seen.contains(sig.path.as_str()) => {}
+                    Some(args) => {
+                        seen.insert(sig.path.as_str());
+                        picked.push((sig, args, false));
+                    }
+                    None => skipped += 1,
+                }
+            }
+        }
+        let cap = if all_public {
+            self.config.max_public_functions
+        } else {
+            self.config.max_functions
+        };
+        let truncated = picked.len().saturating_sub(cap);
+        picked.truncate(cap);
+        let targets = picked
+            .into_iter()
+            .map(|(sig, args, changed)| {
                 let seed = case_seed(ctx, &sig.path);
                 let lines = gen::differential_cases(&args, &seed, self.config.cases_per_fn)
                     .iter()
                     .map(|c| harness::encode_case(c))
                     .collect();
-                Some(HarnessTarget {
+                HarnessTarget {
                     sig: sig.clone(),
                     args,
                     lines,
-                })
+                    changed,
+                }
             })
-            .take(self.config.max_functions)
-            .collect()
+            .collect();
+        Selection {
+            targets,
+            skipped,
+            truncated,
+        }
     }
 
     fn build(&self) -> Step {
@@ -407,7 +469,15 @@ impl Engine for DifferentialEngine {
 
         for (i, c) in case_candidates.iter().enumerate() {
             let step = 1 + i;
-            let path = &targets[c.target].sig.path;
+            let target = &targets[c.target];
+            let path = &target.sig.path;
+            // A function whose code did not change (e.g. after a dependency
+            // update) is only expected to change behavior if named.
+            let (explained, why) = if target.changed {
+                (ctx.intent.allows_behavior_change(path), "")
+            } else {
+                (ctx.intent.lists(path), " although its code did not change")
+            };
             let confirmed = rebuilt && confirms_case(&base_c, &head_c, step, c);
             let repro = confirmed
                 .then(|| {
@@ -425,11 +495,12 @@ impl Engine for DifferentialEngine {
                     EngineKind::Differential,
                     CATEGORY_DIVERGENCE,
                     format!(
-                        "`{path}` behaves differently on head than on base for a generated input"
+                        "`{path}` behaves differently on head than on base for a generated \
+                         input{why}"
                     ),
                     Visibility::Public,
                     Some(path.clone()),
-                    ctx.intent.allows_behavior_change(path),
+                    explained,
                     r,
                 )),
                 None => report.unreproduced.push(hypothesis(

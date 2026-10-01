@@ -14,9 +14,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use rebut_core::Digest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use verifier_core::Digest;
 
 const INDEX_FILE: &str = "index.json";
 
@@ -34,7 +34,7 @@ impl SnapshotKey {
     /// Stable identifier, also used as the entry's directory name.
     pub fn id(&self) -> String {
         Digest::of_parts(&[
-            b"verifier/snapshot-key/v1",
+            b"rebut/snapshot-key/v1",
             self.repo.as_bytes(),
             &self.cargo_lock.0,
             self.toolchain.as_bytes(),
@@ -119,7 +119,7 @@ impl SnapshotCache {
         if let Some(c) = &cache_drive {
             parts.push(digest_file(c)?);
         }
-        let refs: Vec<&[u8]> = std::iter::once(&b"verifier/snapshot/v1"[..])
+        let refs: Vec<&[u8]> = std::iter::once(&b"rebut/snapshot/v1"[..])
             .chain(parts.iter().map(|d| &d.0[..]))
             .collect();
         let entry = SnapshotEntry {

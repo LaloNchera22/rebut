@@ -8,15 +8,15 @@
 //! The prompt includes the PR body, which the attacker wrote. A successful
 //! prompt injection can make the model propose useless or no invariants, so
 //! the worst case is a missed bug. It can't create a finding: a proposal is a
-//! [`verifier_core::Hypothesis`], and only a replayed Kani counterexample
+//! [`rebut_core::Hypothesis`], and only a replayed Kani counterexample
 //! that violates the invariant on the real binary becomes one (ADR-6). An
 //! invariant that itself panics (say `a0.checked_add(1).unwrap() > 0`) is
 //! caught by the replay protocol and reported as unreproduced, not as a panic
 //! of the function.
 
+use rebut_core::{EngineContext, FnSignature};
 use serde::Deserialize;
 use serde_json::json;
-use verifier_core::{EngineContext, FnSignature};
 
 use crate::codegen::{HarnessSpec, Invariant};
 use crate::InvariantProposer;
@@ -67,12 +67,12 @@ impl AnthropicInvariantProposer {
         }
     }
 
-    /// Reads `ANTHROPIC_API_KEY` (and optionally `VERIFIER_FORMAL_MODEL`).
+    /// Reads `ANTHROPIC_API_KEY` (and optionally `REBUT_FORMAL_MODEL`).
     pub fn from_env() -> anyhow::Result<Self> {
         let key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY is not set"))?;
         let mut p = Self::new(key);
-        if let Ok(m) = std::env::var("VERIFIER_FORMAL_MODEL") {
+        if let Ok(m) = std::env::var("REBUT_FORMAL_MODEL") {
             p.model = m;
         }
         Ok(p)
@@ -141,7 +141,7 @@ impl AnthropicInvariantProposer {
             "max_tokens": self.max_tokens,
             "fallbacks": "default",
             "system": "You propose invariants for the formal engine of an automated \
-                       pull-request verifier. Each invariant is checked with the Kani model \
+                       pull-request rebut. Each invariant is checked with the Kani model \
                        checker and any counterexample is replayed in a sandbox; only \
                        counterexamples that reproduce count.",
             "output_config": {

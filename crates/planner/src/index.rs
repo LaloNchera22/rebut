@@ -1,11 +1,11 @@
 //! Per-tree index of functions, tests and `macro_rules!` definitions.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
+use rebut_core::FnSignature;
 use syn::{Attribute, FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Visibility};
-use verifier_core::FnSignature;
 
 use crate::files::Entry;
 
@@ -34,6 +34,13 @@ pub(crate) struct FnEntry {
     /// Part of the library/binary code (not a test target, not a
     /// `#[cfg(test)]` module): reported in `changed_functions`.
     pub reportable: bool,
+    /// Crate directory (relative, `""` for the root crate).
+    pub crate_dir: String,
+    /// `Some` when the fn is certainly reachable as `sig.path` from outside
+    /// the crate (see [`CrateIndexer::finish`]); the flag says whether its
+    /// shape could be called by a harness (no `self`, generics, `async`,
+    /// `unsafe`, variadics). `None` when not reachable, or not sure.
+    pub public_api: Option<bool>,
 }
 
 #[derive(Debug, Default)]
@@ -102,6 +109,8 @@ pub(crate) fn index_tree(files: &BTreeMap<String, Entry>) -> TreeIndex {
             krate,
             idx: &mut idx,
             mod_decls: HashMap::new(),
+            opaque_mods: HashSet::new(),
+            pub_types: HashSet::new(),
             raw: Vec::new(),
         };
         for (path, entry) in files.range(prefix.clone()..) {
@@ -169,6 +178,12 @@ struct RawFn {
     target: Target,
     in_test_mod: bool,
     fn_pub: bool,
+    /// Owning type for inherent methods, and whether its `impl` is plain.
+    owner: Option<(String, bool)>,
+    /// The fn itself carries `#[cfg(..)]`: it may not exist at all.
+    has_cfg: bool,
+    /// Callable by a harness, shape-wise.
+    harness_shape: bool,
     entry: FnEntry,
 }
 
@@ -177,7 +192,28 @@ struct CrateIndexer<'a> {
     idx: &'a mut TreeIndex,
     /// Module path (lib target) -> declared `pub`.
     mod_decls: HashMap<Vec<String>, bool>,
+    /// Modules (lib target) whose presence or location depends on
+    /// attributes (`#[cfg]`, `#[path]`): never trusted as public API.
+    opaque_mods: HashSet<Vec<String>>,
+    /// Non-generic `pub` structs/enums/unions (lib target), as module path +
+    /// type name.
+    pub_types: HashSet<Vec<String>>,
     raw: Vec<RawFn>,
+}
+
+/// What a function belongs to.
+#[derive(Clone, Copy)]
+enum Owner<'a> {
+    Free,
+    /// An inherent `impl` of type `ty`; `plain` when it is exactly
+    /// `impl Ty { .. }` (no generics, no path, no `#[cfg]`).
+    Inherent {
+        ty: &'a str,
+        plain: bool,
+    },
+    /// A trait impl or a trait's default method: never callable by path
+    /// without importing the trait.
+    Trait,
 }
 
 /// Where an item sits while walking a file.
@@ -205,7 +241,7 @@ impl CrateIndexer<'_> {
             match item {
                 Item::Fn(f) => {
                     let body = f.block.to_token_stream();
-                    self.push_fn(scope, None, &f.attrs, &f.vis, &f.sig, body, true);
+                    self.push_fn(scope, Owner::Free, None, &f.attrs, &f.vis, &f.sig, body);
                 }
                 Item::Impl(imp) => {
                     let ty = type_name(&imp.self_ty);
@@ -221,21 +257,20 @@ impl CrateIndexer<'_> {
                         }
                         None => (ty.clone(), None),
                     };
+                    // Trait impl methods are not callable by path without
+                    // importing the trait, so they are never `is_pub`.
+                    let owner = if is_trait_impl {
+                        Owner::Trait
+                    } else {
+                        Owner::Inherent {
+                            ty: &ty,
+                            plain: is_plain_impl(imp),
+                        }
+                    };
                     for ii in &imp.items {
                         if let ImplItem::Fn(m) = ii {
-                            // Trait impl methods are not callable by path without
-                            // importing the trait, so they are never `is_pub`.
-                            let callable = !is_trait_impl;
                             let body = m.block.to_token_stream();
-                            self.push_fn(
-                                scope,
-                                Some(&qual),
-                                &m.attrs,
-                                &m.vis,
-                                &m.sig,
-                                body,
-                                callable,
-                            );
+                            self.push_fn(scope, owner, Some(&qual), &m.attrs, &m.vis, &m.sig, body);
                         }
                     }
                 }
@@ -246,12 +281,12 @@ impl CrateIndexer<'_> {
                             if let Some(block) = &m.default {
                                 self.push_fn(
                                     scope,
+                                    Owner::Trait,
                                     Some(&qual),
                                     &m.attrs,
                                     &tr.vis,
                                     &m.sig,
                                     block.to_token_stream(),
-                                    false,
                                 );
                             }
                         }
@@ -264,9 +299,42 @@ impl CrateIndexer<'_> {
                     if scope.target == Target::Lib {
                         self.mod_decls
                             .insert(child.mods.clone(), matches!(m.vis, Visibility::Public(_)));
+                        if has_attr(&m.attrs, &["cfg", "path"]) {
+                            self.opaque_mods.insert(child.mods.clone());
+                        }
                     }
                     if let Some((_, items)) = &m.content {
                         self.items(items, &child);
+                    }
+                }
+                Item::Struct(syn::ItemStruct {
+                    attrs,
+                    vis,
+                    ident,
+                    generics,
+                    ..
+                })
+                | Item::Enum(syn::ItemEnum {
+                    attrs,
+                    vis,
+                    ident,
+                    generics,
+                    ..
+                })
+                | Item::Union(syn::ItemUnion {
+                    attrs,
+                    vis,
+                    ident,
+                    generics,
+                    ..
+                }) => {
+                    let public = matches!(vis, Visibility::Public(_))
+                        && generics.params.is_empty()
+                        && !has_attr(attrs, &["cfg"]);
+                    if public && scope.target == Target::Lib && !scope.in_test_mod {
+                        let mut p = scope.mods.clone();
+                        p.push(ident.to_string());
+                        self.pub_types.insert(p);
                     }
                 }
                 Item::Macro(m) if m.mac.path.is_ident("macro_rules") => {
@@ -286,13 +354,14 @@ impl CrateIndexer<'_> {
     fn push_fn(
         &mut self,
         scope: &Scope,
+        owner: Owner<'_>,
         qual: Option<&(String, Option<String>)>,
         attrs: &[Attribute],
         vis: &Visibility,
         sig: &Signature,
         body: TokenStream,
-        callable: bool,
     ) {
+        let callable = !matches!(owner, Owner::Trait);
         let name = sig.ident.to_string();
         let mut local: Vec<String> = scope.mods.clone();
         let mut key_tail = String::new();
@@ -351,6 +420,8 @@ impl CrateIndexer<'_> {
             idents,
             reportable: scope.target != Target::Test && !scope.in_test_mod && !is_test,
             test_name,
+            crate_dir: self.krate.dir.clone(),
+            public_api: None,
         };
         self.raw.push(RawFn {
             key,
@@ -358,12 +429,26 @@ impl CrateIndexer<'_> {
             target: scope.target.clone(),
             in_test_mod: scope.in_test_mod,
             fn_pub: callable && matches!(vis, Visibility::Public(_)),
+            owner: match owner {
+                Owner::Inherent { ty, plain } => Some((ty.to_string(), plain)),
+                _ => None,
+            },
+            has_cfg: has_attr(attrs, &["cfg"]),
+            harness_shape: harness_shape(sig),
             entry,
         });
     }
 
     /// Resolves `is_pub` (the fn and every enclosing module are `pub`, in the
-    /// library target) and moves the functions into the index.
+    /// library target) and `public_api`, and moves the functions into the
+    /// index.
+    ///
+    /// `public_api` is deliberately stricter than `is_pub`: no module or
+    /// item on the path may carry `#[cfg]` (it may not be compiled) or
+    /// `#[path]` (its file may not be the module we think), and a method's
+    /// type must be a non-generic `pub` type declared in the same module as
+    /// a plain `impl Ty` block. Anything else might not be reachable as
+    /// `sig.path`, so it is left out rather than guessed at.
     fn finish(self) {
         for mut r in self.raw {
             r.entry.sig.is_pub = r.fn_pub
@@ -371,6 +456,22 @@ impl CrateIndexer<'_> {
                 && !r.in_test_mod
                 && (1..=r.mods.len())
                     .all(|n| self.mod_decls.get(&r.mods[..n]).copied() == Some(true));
+            let mods_clear = (1..=r.mods.len()).all(|n| !self.opaque_mods.contains(&r.mods[..n]));
+            let owner_ok = match &r.owner {
+                None => true,
+                Some((ty, plain)) => {
+                    let mut p = r.mods.clone();
+                    p.push(ty.clone());
+                    *plain && self.pub_types.contains(&p)
+                }
+            };
+            let reachable = r.entry.sig.is_pub
+                && r.entry.reportable
+                && mods_clear
+                && owner_ok
+                && !r.has_cfg
+                && !r.key.contains('#');
+            r.entry.public_api = reachable.then_some(r.harness_shape);
             self.idx.fns.insert(r.key, r.entry);
         }
     }
@@ -385,6 +486,46 @@ fn unique_key<V>(map: &BTreeMap<String, V>, base: String) -> String {
         .map(|n| format!("{base}#{n}"))
         .find(|k| !map.contains_key(k))
         .expect("unbounded")
+}
+
+fn has_attr(attrs: &[Attribute], names: &[&str]) -> bool {
+    attrs
+        .iter()
+        .any(|a| names.iter().any(|n| a.path().is_ident(n)))
+}
+
+/// Exactly `impl Ty { .. }`: no generics, no `unsafe`, a bare type name,
+/// no `#[cfg]`.
+fn is_plain_impl(imp: &syn::ItemImpl) -> bool {
+    let bare = match &*imp.self_ty {
+        syn::Type::Path(p) => {
+            p.qself.is_none()
+                && p.path.leading_colon.is_none()
+                && p.path.segments.len() == 1
+                && p.path.segments[0].arguments.is_none()
+        }
+        _ => false,
+    };
+    bare && imp.generics.params.is_empty()
+        && imp.generics.where_clause.is_none()
+        && imp.unsafety.is_none()
+        && !has_attr(&imp.attrs, &["cfg"])
+}
+
+/// Whether a harness could call this signature as `path(args..)`, before
+/// looking at the argument types: no receiver, no type or const generics,
+/// not `async`/`unsafe`/variadic.
+fn harness_shape(sig: &Signature) -> bool {
+    sig.asyncness.is_none()
+        && sig.unsafety.is_none()
+        && sig.variadic.is_none()
+        && sig.generics.where_clause.is_none()
+        && sig
+            .generics
+            .params
+            .iter()
+            .all(|p| matches!(p, syn::GenericParam::Lifetime(_)))
+        && sig.inputs.iter().all(|a| matches!(a, FnArg::Typed(_)))
 }
 
 fn has_cfg_test(attrs: &[Attribute]) -> bool {

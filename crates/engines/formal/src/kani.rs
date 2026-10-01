@@ -135,8 +135,8 @@ pub fn check_shape(values: &[Vec<u8>], args: &[ArgType]) -> Result<(), String> {
 
 /// Real-shaped `cargo kani --concrete-playback=print` output for a failed proof.
 #[cfg(test)]
-pub(crate) const FAILED_FIXTURE: &str = r#"Kani Rust Verifier 0.56.0 (cargo plugin)
-Checking harness verifier_proof_math_clamp_0...
+pub(crate) const FAILED_FIXTURE: &str = r#"Kani Rust Rebut 0.56.0 (cargo plugin)
+Checking harness rebut_proof_math_clamp_0...
 CBMC 6.3.1 (cbmc-6.3.1)
 Runtime Symex: 0.0123s
 
@@ -146,26 +146,26 @@ Check 1: mylib::math::clamp.arithmetic_overflow.1
 	 - Description: "attempt to subtract with overflow"
 	 - Location: src/math.rs:4:12 in function mylib::math::clamp
 
-Check 2: verifier_proof_math_clamp_0.assertion.1
+Check 2: rebut_proof_math_clamp_0.assertion.1
 	 - Status: FAILURE
-	 - Description: "verifier-formal invariant: ret >= a1 && ret <= a2"
-	 - Location: src/lib.rs:31:5 in function verifier_proof_math_clamp_0
+	 - Description: "rebut-formal invariant: ret >= a1 && ret <= a2"
+	 - Location: src/lib.rs:31:5 in function rebut_proof_math_clamp_0
 
 
 SUMMARY:
  ** 1 of 2 failed
-Failed Checks: verifier-formal invariant: ret >= a1 && ret <= a2
- File: "src/lib.rs", line 31, in verifier_proof_math_clamp_0
+Failed Checks: rebut-formal invariant: ret >= a1 && ret <= a2
+ File: "src/lib.rs", line 31, in rebut_proof_math_clamp_0
 
 VERIFICATION:- FAILED
-Concrete playback unit test for `verifier_proof_math_clamp_0`:
+Concrete playback unit test for `rebut_proof_math_clamp_0`:
 ```
-/// Test generated for harness `verifier_proof_math_clamp_0`
+/// Test generated for harness `rebut_proof_math_clamp_0`
 ///
-/// Check for `assertion`: "verifier-formal invariant: ret >= a1 && ret <= a2"
+/// Check for `assertion`: "rebut-formal invariant: ret >= a1 && ret <= a2"
 
 #[test]
-fn kani_concrete_playback_verifier_proof_math_clamp_0_14615086421508420155() {
+fn kani_concrete_playback_rebut_proof_math_clamp_0_14615086421508420155() {
     let concrete_vals: Vec<Vec<u8>> = vec![
         // -2147483648
         vec![0, 0, 0, 128],
@@ -174,14 +174,14 @@ fn kani_concrete_playback_verifier_proof_math_clamp_0_14615086421508420155() {
         // 10
         vec![10, 0, 0, 0],
     ];
-    kani::concrete_playback_run(concrete_vals, verifier_proof_math_clamp_0);
+    kani::concrete_playback_run(concrete_vals, rebut_proof_math_clamp_0);
 }
 ```
-INFO: To automatically add the concrete playback unit test `kani_concrete_playback_verifier_proof_math_clamp_0_14615086421508420155` to the src code, run it with `--concrete-playback=inplace`.
+INFO: To automatically add the concrete playback unit test `kani_concrete_playback_rebut_proof_math_clamp_0_14615086421508420155` to the src code, run it with `--concrete-playback=inplace`.
 Verification Time: 0.41s
 
 Summary:
-Verification failed for - verifier_proof_math_clamp_0
+Verification failed for - rebut_proof_math_clamp_0
 Complete - 0 successfully verified harnesses, 1 failures, 1 total.
 "#;
 
@@ -200,7 +200,7 @@ mod tests {
             } => {
                 assert_eq!(
                     failed_checks,
-                    vec!["verifier-formal invariant: ret >= a1 && ret <= a2".to_string()]
+                    vec!["rebut-formal invariant: ret >= a1 && ret <= a2".to_string()]
                 );
                 assert_eq!(
                     counterexample.unwrap(),

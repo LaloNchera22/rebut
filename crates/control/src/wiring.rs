@@ -12,15 +12,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use time::OffsetDateTime;
-use tokio::process::Command;
-use verifier_challenges::drand;
-use verifier_challenges::ChallengesEngine;
-use verifier_core::{
+use rebut_challenges::drand;
+use rebut_challenges::ChallengesEngine;
+use rebut_core::{
     CommitSha, DrandBeacon, Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest,
     ImpactPlan, PullRequest, RepoId,
 };
-use verifier_fabric::SourceProvider;
+use rebut_fabric::SourceProvider;
+use time::OffsetDateTime;
+use tokio::process::Command;
 
 use crate::orchestrator::{BeaconSource, Planner, SealedSpecSource};
 
@@ -136,9 +136,8 @@ pub struct GitSource(pub GitCheckouts);
 impl SourceProvider for GitSource {
     async fn fetch(&self, req: &ExecutionRequest) -> anyhow::Result<Vec<u8>> {
         let dir = self.0.checkout(&req.repo_url, &req.commit).await?;
-        let tgz =
-            tokio::task::spawn_blocking(move || verifier_guest::archive::pack_directory(&dir))
-                .await??;
+        let tgz = tokio::task::spawn_blocking(move || rebut_guest::archive::pack_directory(&dir))
+            .await??;
         Ok(tgz)
     }
 }
@@ -151,7 +150,7 @@ impl Planner for CheckoutPlanner {
     async fn plan(&self, pr: &PullRequest) -> anyhow::Result<ImpactPlan> {
         let base = self.0.checkout(&pr.base_clone_url, &pr.base_sha).await?;
         let head = self.0.checkout(&pr.head_clone_url, &pr.head_sha).await?;
-        tokio::task::spawn_blocking(move || verifier_planner::plan(&base, &head)).await?
+        tokio::task::spawn_blocking(move || rebut_planner::plan(&base, &head)).await?
     }
 }
 
@@ -161,7 +160,7 @@ impl Planner for CheckoutPlanner {
 pub struct CheckoutDiff(pub GitCheckouts);
 
 #[async_trait::async_trait]
-impl verifier_mutation::DiffSource for CheckoutDiff {
+impl rebut_mutation::DiffSource for CheckoutDiff {
     async fn diff(&self, ctx: &EngineContext) -> anyhow::Result<String> {
         let pr = &ctx.pr;
         let base = self.0.checkout(&pr.base_clone_url, &pr.base_sha).await?;

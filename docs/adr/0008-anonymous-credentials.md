@@ -3,7 +3,7 @@
 ## Status
 
 Accepted. Phase 3. Issuance, presentation, verification and nullifiers are
-implemented in `verifier-reputation` (`credential` module) on
+implemented in `rebut-reputation` (`credential` module) on
 [zkryptium](https://github.com/Cybersecurity-LINKS/zkryptium) 0.7.1. Not yet
 wired into the control plane.
 
@@ -21,19 +21,19 @@ credentials (BBS signatures).
 ## Decision
 
 - Use **BBS signatures** (IETF CFRG draft `draft-irtf-cfrg-bbs-signatures`). The
-  verifier issues a credential over attributes derived from the trust graph. The
+  Rebut issues a credential over attributes derived from the trust graph. The
   holder presents zero-knowledge proofs that disclose chosen attributes and prove
   predicates (e.g. `merges ≥ 20`) over the rest. Presentations are unlinkable.
 - Presentations carry a **nullifier** derived from the holder's secret and a
-  verifier-chosen scope. The same person can't claim a scoped benefit twice, and
+  rebut-chosen scope. The same person can't claim a scoped benefit twice, and
   presentations in different scopes can't be linked.
 - **zkVMs later**, only for aggregation BBS predicates can't express (e.g. weighted
   sums across organizations). They are heavier to prove and verify.
-- Phase 1–2 builds only the substrate: `verifier-reputation`'s `TrustGraph`, keyed by
+- Phase 1–2 builds only the substrate: `rebut-reputation`'s `TrustGraph`, keyed by
   receipt digests, and the `CredentialScheme` trait. No cryptography is implemented
   until a reviewed BBS library is integrated.
 - **Library: zkryptium, pinned to `=0.7.1`.** It implements the BBS signatures,
-  blind signatures and per-verifier-linkability (pseudonym) drafts on
+  blind signatures and per-rebut-linkability (pseudonym) drafts on
   BLS12-381-SHA-256, and is on crates.io. The alternative, MATTR's `pairing_crypto`,
   is not published on crates.io and has no pseudonym support in a release. We write
   no pairing code ourselves.
@@ -56,7 +56,7 @@ What is implemented:
   verifier nonce. Each presentation is re-randomized.
 - Nullifiers: SHA-256 of the draft's pseudonym for the verifier's scope. Same
   credential and scope give the same nullifier; different scopes are unlinkable.
-- `verifier credential verify` in the CLI.
+- `rebut credential verify` in the CLI.
 
 Costs and limits:
 

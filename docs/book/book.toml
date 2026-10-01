@@ -1,0 +1,11 @@
+[book]
+title = "rebut"
+description = "Check that a Rust change does what it claims, on your own machine."
+authors = ["rebut contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+site-url = "/rebut/"
+git-repository-url = "https://github.com/LaloNchera22/rebut"
+edit-url-template = "https://github.com/LaloNchera22/rebut/edit/main/docs/book/{path}"

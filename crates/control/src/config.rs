@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Debug, Clone, Parser)]
-#[command(name = "verifier-control", about = "rebut control plane", version)]
+#[command(name = "rebut-control", about = "rebut control plane", version)]
 pub struct Config {
     #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
     pub database_url: String,
@@ -54,7 +54,7 @@ pub struct Config {
     pub drand_url: Option<String>,
     /// Enables the formal engine's invariant proposer and the rival agent
     /// (phase 2). Their output is only ever a hypothesis to replay (ADR-6).
-    /// Models: `VERIFIER_FORMAL_MODEL`, `VERIFIER_ADVERSARY_MODEL`.
+    /// Models: `REBUT_FORMAL_MODEL`, `REBUT_ADVERSARY_MODEL`.
     #[arg(long, env = "ANTHROPIC_API_KEY", hide_env_values = true)]
     pub anthropic_api_key: Option<String>,
     #[command(flatten)]
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn parses_flags_with_defaults() {
         let c = Config::try_parse_from([
-            "verifier-control",
+            "rebut-control",
             "--database-url=postgres://x",
             "--github-webhook-secret=s",
             "--github-app-id=42",

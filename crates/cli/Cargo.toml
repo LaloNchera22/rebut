@@ -1,24 +1,29 @@
 [package]
-name = "verifier-cli"
-description = "`verifier`: run the public checks locally, recompute seeds, regenerate challenges, verify receipts and anonymous credentials."
+name = "rebut"
+description = "Check that a Rust change does what it claims: differential runs against the base branch, seeded challenges, mutation and Kani, all on your machine."
+readme = "../../README.md"
+keywords = ["testing", "verification", "differential", "fuzzing", "refactor"]
+categories = ["development-tools::testing", "command-line-utilities"]
+homepage = "https://lalonchera22.github.io/rebut/"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
 
 [[bin]]
-name = "verifier"
+name = "rebut"
 path = "src/main.rs"
 
 [dependencies]
-verifier-core.workspace = true
-verifier-planner.workspace = true
-verifier-fabric.workspace = true
-verifier-differential.workspace = true
-verifier-challenges.workspace = true
-verifier-receipts.workspace = true
-verifier-reputation.workspace = true
-verifier-guest = { path = "../guest", default-features = false }
+rebut-core.workspace = true
+rebut-planner.workspace = true
+rebut-fabric.workspace = true
+rebut-differential.workspace = true
+rebut-challenges.workspace = true
+rebut-receipts.workspace = true
+rebut-reputation.workspace = true
+rebut-guest = { path = "../guest", version = "0.1.0", default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
 serde.workspace = true

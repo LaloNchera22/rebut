@@ -4,33 +4,33 @@
 
 use std::sync::{Arc, Mutex};
 
-use verifier_core::{
+use rebut_core::{
     ChangeKind, CommitSha, Digest, Engine, EngineContext, EngineKind, ExecutionRequest,
     ExecutionResult, Executor, FnSignature, IntentManifest, PullRequest, RepoId, Step, StepOutcome,
 };
-use verifier_formal::{
+use rebut_formal::{
     encode_input, kani_request, FabricKaniRunner, FormalEngine, HarnessSpec, Invariant, KaniRunner,
     StaticProposer,
 };
 
-const FAILED: &str = r#"Kani Rust Verifier 0.56.0 (cargo plugin)
-Checking harness verifier_proof_math_clamp_0...
+const FAILED: &str = r#"Kani Rust Rebut 0.56.0 (cargo plugin)
+Checking harness rebut_proof_math_clamp_0...
 
 RESULTS:
-Check 1: verifier_proof_math_clamp_0.assertion.1
+Check 1: rebut_proof_math_clamp_0.assertion.1
 	 - Status: FAILURE
-	 - Description: "verifier-formal invariant: ret >= a1 && ret <= a2"
-	 - Location: src/lib.rs:31:5 in function verifier_proof_math_clamp_0
+	 - Description: "rebut-formal invariant: ret >= a1 && ret <= a2"
+	 - Location: src/lib.rs:31:5 in function rebut_proof_math_clamp_0
 
 
 SUMMARY:
  ** 1 of 1 failed
 
 VERIFICATION:- FAILED
-Concrete playback unit test for `verifier_proof_math_clamp_0`:
+Concrete playback unit test for `rebut_proof_math_clamp_0`:
 ```
 #[test]
-fn kani_concrete_playback_verifier_proof_math_clamp_0_1() {
+fn kani_concrete_playback_rebut_proof_math_clamp_0_1() {
     let concrete_vals: Vec<Vec<u8>> = vec![
         // -5
         vec![251, 255, 255, 255],
@@ -39,14 +39,14 @@ fn kani_concrete_playback_verifier_proof_math_clamp_0_1() {
         // 10
         vec![10, 0, 0, 0],
     ];
-    kani::concrete_playback_run(concrete_vals, verifier_proof_math_clamp_0);
+    kani::concrete_playback_run(concrete_vals, rebut_proof_math_clamp_0);
 }
 ```
 Verification Time: 0.41s
 "#;
 
-const VERIFIED: &str = "Kani Rust Verifier 0.56.0 (cargo plugin)\n\
-RESULTS:\nCheck 1: verifier_proof_math_clamp_0.assertion.1\n\t - Status: SUCCESS\n\n\
+const VERIFIED: &str = "Kani Rust Rebut 0.56.0 (cargo plugin)\n\
+RESULTS:\nCheck 1: rebut_proof_math_clamp_0.assertion.1\n\t - Status: SUCCESS\n\n\
 SUMMARY:\n ** 0 of 1 failed\n\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.1s\n";
 
 /// What the fake Kani step does.
@@ -120,28 +120,16 @@ fn fabric(kani: KaniStep, replay: fn(i32, i32, i32) -> (i32, &'static str)) -> A
 /// `x < lo` falls through unclamped.
 fn buggy(x: i32, _lo: i32, hi: i32) -> (i32, &'static str) {
     if x > hi {
-        (
-            0,
-            "verifier:start\nverifier:returned\nverifier:invariant:held\n",
-        )
+        (0, "rebut:start\nrebut:returned\nrebut:invariant:held\n")
     } else if x < 0 {
-        (
-            0,
-            "verifier:start\nverifier:returned\nverifier:invariant:violated\n",
-        )
+        (0, "rebut:start\nrebut:returned\nrebut:invariant:violated\n")
     } else {
-        (
-            0,
-            "verifier:start\nverifier:returned\nverifier:invariant:held\n",
-        )
+        (0, "rebut:start\nrebut:returned\nrebut:invariant:held\n")
     }
 }
 
 fn correct(_: i32, _: i32, _: i32) -> (i32, &'static str) {
-    (
-        0,
-        "verifier:start\nverifier:returned\nverifier:invariant:held\n",
-    )
+    (0, "rebut:start\nrebut:returned\nrebut:invariant:held\n")
 }
 
 fn clamp() -> FnSignature {
@@ -181,7 +169,7 @@ fn ctx(exec: Arc<dyn Executor>) -> EngineContext {
             ..Default::default()
         },
         policy: Default::default(),
-        plan: verifier_core::ImpactPlan {
+        plan: rebut_core::ImpactPlan {
             changed_functions: vec![clamp()],
             ..Default::default()
         },
@@ -213,7 +201,7 @@ fn kani_request_shape() {
     assert_eq!(
         req.steps,
         vec![Step::Kani {
-            harness: "verifier_proof_math_clamp_0".into(),
+            harness: "rebut_proof_math_clamp_0".into(),
             source: h.source.clone(),
         }]
     );
@@ -325,6 +313,6 @@ async fn no_proposals_no_vm_time() {
         .run(&ctx(f.clone()))
         .await
         .unwrap();
-    assert_eq!(r, verifier_core::EngineReport::default());
+    assert_eq!(r, rebut_core::EngineReport::default());
     assert!(f.seen.lock().unwrap().is_empty());
 }
