@@ -11,12 +11,13 @@ use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
+use rebut_adversary::{AdversaryConfig, AdversaryEngine, HypothesisGenerator, Oracle};
 use rebut_challenges::drand::{self, BeaconSource};
 use rebut_challenges::ChallengesEngine;
 use rebut_core::{
-    CommitSha, DiffScope, Digest, DrandBeacon, Engine, EngineContext, EngineKind, ExecutionRequest,
-    Finding, ImpactPlan, IntentManifest, Policy, PullRequest, RepoId, Seed, Verdict,
-    GENERATOR_VERSION,
+    ChangeKind, CommitSha, DiffScope, Digest, DrandBeacon, Engine, EngineContext, EngineKind,
+    ExecutionRequest, Finding, ImpactPlan, IntentManifest, Policy, PullRequest, RepoId, Seed,
+    Verdict, GENERATOR_VERSION,
 };
 use rebut_differential::{DifferentialConfig, DifferentialEngine};
 use rebut_fabric::{LocalProcessExecutor, SourceProvider};
@@ -37,6 +38,60 @@ pub struct LocalOptions {
     /// Cap on the functions the differential engine compares (default: 32
     /// changed, or 200 public).
     pub max_functions: Option<usize>,
+    /// Rival agent, off unless set. Its hypotheses are replayed like any
+    /// other input; only reproductions become findings (ADR-6).
+    pub adversary: Option<Arc<dyn HypothesisGenerator>>,
+}
+
+/// `rebut verify` flags for the rival agent. Off unless one is given.
+#[derive(Debug, Default, clap::Args)]
+pub struct AdversaryArgs {
+    /// Rival agent proposing inputs that might break the change (off by
+    /// default): `ollama[:model]`, `openai-compat` or `anthropic`
+    /// [env: REBUT_ADVERSARY].
+    #[arg(long, value_name = "PROVIDER")]
+    pub adversary: Option<String>,
+    /// Endpoint of an OpenAI-compatible server, e.g. http://localhost:8080/v1.
+    #[arg(long, env = "REBUT_ADVERSARY_URL", value_name = "URL")]
+    pub adversary_url: Option<String>,
+    /// Model for the rival agent (ollama default: qwen2.5-coder:7b).
+    #[arg(long, env = "REBUT_ADVERSARY_MODEL", value_name = "MODEL")]
+    pub adversary_model: Option<String>,
+}
+
+impl AdversaryArgs {
+    /// The configured generator and a one-line description, or `None` when
+    /// the rival agent is off. A misconfiguration given by flag is an error;
+    /// one that only comes from `REBUT_ADVERSARY` is pushed to `warnings`
+    /// and the rival agent stays off, so a stray environment variable can't
+    /// break `verify`.
+    pub fn generator(
+        &self,
+        warnings: &mut Vec<String>,
+    ) -> anyhow::Result<Option<(Arc<dyn HypothesisGenerator>, String)>> {
+        let (spec, from_flag) = match &self.adversary {
+            Some(s) => (s.clone(), true),
+            None => match std::env::var("REBUT_ADVERSARY") {
+                Ok(s) => (s, false),
+                Err(_) => return Ok(None),
+            },
+        };
+        let built = AdversaryConfig::parse(
+            &spec,
+            self.adversary_url.clone(),
+            self.adversary_model.clone(),
+        )
+        .and_then(|c| c.map(|c| Ok((c.build()?, c.describe()))).transpose());
+        match built {
+            Err(e) if !from_flag => {
+                warnings.push(format!(
+                    "REBUT_ADVERSARY={spec}: {e:#}; continuing without the rival agent"
+                ));
+                Ok(None)
+            }
+            other => other,
+        }
+    }
 }
 
 /// What the differential engine compares with [`DiffScope::AllPublic`].
@@ -70,6 +125,9 @@ pub struct LocalRun {
     /// Hypotheses that could not be reproduced (never findings, ADR-6).
     pub unreproduced: usize,
     pub vm_seconds: u64,
+    /// Non-fatal problems, e.g. the rival agent's model server is down.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 impl LocalRun {
@@ -274,7 +332,25 @@ pub async fn verify_local(repo: &Path, opts: LocalOptions) -> anyhow::Result<Loc
             EngineKind::Challenges => engines.push(Arc::new(ChallengesEngine::from_base_checkout(
                 base_dir.path(),
             )?)),
+            // Opt-in below, never from the policy alone.
+            EngineKind::Adversary => {}
             other => tracing::info!(engine = %other, "not available locally in phase 1; skipped"),
+        }
+    }
+    let mut warnings = Vec::new();
+    if let Some(generator) = opts.adversary {
+        // An extra: an unreachable model server never fails the run.
+        match generator.ready().await {
+            Err(e) => warnings.push(format!(
+                "rival agent unavailable, continuing without it: {e:#}"
+            )),
+            Ok(()) => {
+                let mut engine = AdversaryEngine::new(generator);
+                if ctx.intent.kind == ChangeKind::Refactor {
+                    engine.adversary.oracle = Oracle::Differential;
+                }
+                engines.push(Arc::new(engine));
+            }
         }
     }
 
@@ -317,6 +393,7 @@ pub async fn verify_local(repo: &Path, opts: LocalOptions) -> anyhow::Result<Loc
         verdict,
         unreproduced,
         vm_seconds,
+        warnings,
     })
 }
 
@@ -506,5 +583,127 @@ mod tests {
             assert!(f.is_actionable());
             assert_ne!(f.reproduction().expected(), f.reproduction().observed());
         }
+    }
+}
+
+#[cfg(test)]
+mod adversary_tests {
+    use super::*;
+    use rebut_core::{Hypothesis, HypothesisSource, VerdictStatus};
+
+    fn git_in(dir: &Path, args: &[&str]) {
+        let st = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(st.success());
+    }
+
+    /// Insists a changed function is broken, with no input that shows it.
+    struct Insistent;
+
+    #[async_trait::async_trait]
+    impl HypothesisGenerator for Insistent {
+        async fn propose(&self, _: &EngineContext) -> anyhow::Result<Vec<Hypothesis>> {
+            Ok(vec![Hypothesis {
+                source: HypothesisSource::Llm,
+                target: "demo::f".into(),
+                claim: "definitely overflows".into(),
+                candidate_input: Some(b"\xFF".to_vec()),
+            }])
+        }
+    }
+
+    /// An unreachable model server only warns, and a hypothesis that is
+    /// never reproduced is not a finding (no other engine runs here, and
+    /// `f(u8, u8)` has no harness, so nothing is built).
+    #[tokio::test]
+    async fn rival_agent_is_an_extra_never_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(
+            d.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("src/lib.rs"),
+            "pub fn f(a: u8, b: u8) -> u8 { a + b }\n",
+        )
+        .unwrap();
+        git_in(d, &["init", "-q", "-b", "main"]);
+        git_in(d, &["add", "."]);
+        git_in(d, &["commit", "-q", "-m", "base"]);
+        git_in(d, &["checkout", "-q", "-b", "pr"]);
+        std::fs::write(
+            d.join("src/lib.rs"),
+            "pub fn f(a: u8, b: u8) -> u8 { b + a }\n",
+        )
+        .unwrap();
+        git_in(d, &["commit", "-q", "-am", "head"]);
+
+        let opts = |adversary| LocalOptions {
+            base: "main".into(),
+            engines: Some(vec![]),
+            adversary,
+            ..Default::default()
+        };
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let down =
+            rebut_adversary::OpenAiCompatGenerator::new(format!("http://127.0.0.1:{port}/v1"), "m");
+        let run = verify_local(d, opts(Some(Arc::new(down)))).await.unwrap();
+        assert!(
+            run.warnings[0].contains("rival agent unavailable"),
+            "{:?}",
+            run.warnings
+        );
+        assert!(run.verdict.engines_run.is_empty());
+
+        let run = verify_local(d, opts(Some(Arc::new(Insistent))))
+            .await
+            .unwrap();
+        assert!(run.warnings.is_empty());
+        assert_eq!(run.verdict.engines_run, vec![EngineKind::Adversary]);
+        assert_eq!(run.plan.changed_functions[0].path, "demo::f");
+        assert_eq!(run.unreproduced, 1);
+        assert!(run.verdict.findings.is_empty());
+        assert_ne!(run.verdict.status(), VerdictStatus::Flagged);
+    }
+
+    #[test]
+    fn misconfiguration_fails_by_flag_but_only_warns_from_env() {
+        let mut warnings = vec![];
+        assert!(AdversaryArgs::default()
+            .generator(&mut warnings)
+            .unwrap()
+            .is_none());
+        let flag = AdversaryArgs {
+            adversary: Some("openai-compat".into()),
+            ..Default::default()
+        };
+        assert!(flag.generator(&mut warnings).is_err());
+        let ok = AdversaryArgs {
+            adversary: Some("ollama:llama3.1:8b".into()),
+            ..Default::default()
+        };
+        let (_, what) = ok.generator(&mut warnings).unwrap().unwrap();
+        assert_eq!(what, "ollama llama3.1:8b at http://localhost:11434/v1");
+        assert!(warnings.is_empty());
+
+        // The only test touching this variable.
+        std::env::set_var("REBUT_ADVERSARY", "openai-compat");
+        let from_env = AdversaryArgs::default().generator(&mut warnings);
+        std::env::remove_var("REBUT_ADVERSARY");
+        assert!(from_env.unwrap().is_none());
+        assert!(warnings[0].starts_with("REBUT_ADVERSARY=openai-compat"));
     }
 }

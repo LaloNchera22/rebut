@@ -6,17 +6,41 @@ on February 29th, a string that is valid UTF-8 but not valid for your parser.
 The **rival agent** asks a language model to read the change and propose such
 inputs.
 
-It runs against a local model through [Ollama](https://ollama.com), so nothing
-leaves your machine and there is no API key:
+It is **off by default**. Turn it on with a local model through
+[Ollama](https://ollama.com), so nothing leaves your machine and there is no
+API key:
 
 ```sh
-ollama pull qwen2.5-coder     # or any code model you like
+ollama pull qwen2.5-coder:7b
 ollama serve                  # if it isn't already running
 rebut verify --base main --adversary ollama
 ```
 
-`rebut verify --help` lists the options for choosing the model and the Ollama
-URL.
+## Choosing a model
+
+| Flag | What it does |
+|---|---|
+| `--adversary ollama` | Ollama at `http://localhost:11434/v1`, model `qwen2.5-coder:7b`. |
+| `--adversary ollama:<model>` | Another Ollama model, e.g. `ollama:llama3.1:8b`. |
+| `--adversary openai-compat --adversary-url <url> --adversary-model <name>` | Any OpenAI-compatible chat completions server: llama.cpp `llama-server`, LM Studio, vLLM. |
+| `--adversary anthropic` | The hosted Anthropic API. Needs `ANTHROPIC_API_KEY`; costs money. |
+| `--adversary-url <url>` | Overrides the endpoint (also for `ollama`). |
+| `--adversary-model <name>` | Overrides the model. |
+
+The same settings can come from the environment: `REBUT_ADVERSARY`,
+`REBUT_ADVERSARY_URL`, `REBUT_ADVERSARY_MODEL`, and `REBUT_ADVERSARY_API_KEY`
+for a server that wants a bearer token.
+
+If the model server isn't running, `verify` prints a warning and carries on
+without the rival agent. A mistake in the flags (an unknown provider,
+`openai-compat` without a URL) is an error; the same mistake coming only from
+`REBUT_ADVERSARY` is a warning, so a stray variable can't break `verify`.
+At most 8 hypotheses are asked for and replayed per run, and a model that
+takes longer than 3 minutes is treated as having proposed nothing.
+
+Small models often wrap their answer in prose or code fences, or leave
+trailing commas. rebut reads such answers anyway and drops whatever it can't
+use; an unusable answer means zero hypotheses, never a failed run.
 
 ## The model's output is never evidence
 

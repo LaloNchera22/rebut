@@ -54,7 +54,8 @@ pub struct Config {
     pub drand_url: Option<String>,
     /// Enables the formal engine's invariant proposer and the rival agent
     /// (phase 2). Their output is only ever a hypothesis to replay (ADR-6).
-    /// Models: `REBUT_FORMAL_MODEL`, `REBUT_ADVERSARY_MODEL`.
+    /// Models: `REBUT_FORMAL_MODEL`, `REBUT_ADVERSARY_MODEL`. The rival
+    /// agent can use a local model instead: `REBUT_ADVERSARY=ollama` (ADR-9).
     #[arg(long, env = "ANTHROPIC_API_KEY", hide_env_values = true)]
     pub anthropic_api_key: Option<String>,
     #[command(flatten)]

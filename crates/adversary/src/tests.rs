@@ -430,6 +430,27 @@ async fn engine_runs_generator_then_triage() {
     assert_eq!(r.unreproduced.len(), 1);
 }
 
+/// What a small local model says goes through the lenient parser and then
+/// the same replays: confident prose that doesn't reproduce counts for
+/// nothing (ADR-6).
+#[tokio::test]
+async fn sloppy_local_model_answer_is_replayed_like_any_other() {
+    let answer = "Sure! Both of these definitely crash:\n```json\n{\"hypotheses\": [\n  \
+        {\"target\": \"`mylib::parse::header`\", \"claim\": \"CONFIRMED panic\", \"input_encoding\": \"utf8\", \"input\": \"ok\"},\n  \
+        {\"target\": \"mylib::parse::header\", \"claim\": \"magic byte\", \"input_encoding\": \"hex\", \"input\": \"0xff\", \"severity\": \"critical\"},\n]}\n```";
+    let hyps = parse_hypotheses_lenient(answer, &[TARGET.to_string()], 8, 1024);
+    assert_eq!(hyps.len(), 2);
+    let exec = Arc::new(FakeExec::default());
+    let r = AdversaryEngine::new(Arc::new(FakeGen::Fixed(hyps)))
+        .run(&ctx(exec.clone()))
+        .await
+        .unwrap();
+    assert_eq!(r.findings.len(), 1);
+    assert_eq!(r.findings[0].reproduction().input(), b"\xFF");
+    assert_eq!(r.unreproduced.len(), 1);
+    assert!(r.unreproduced[0].claim.starts_with("CONFIRMED panic ["));
+}
+
 #[tokio::test]
 async fn generator_failure_is_a_quiet_empty_report() {
     for g in [

@@ -1,15 +1,16 @@
 //! `rebut-control`: HTTP API + worker pool in one process.
 //!
 //! Wires the planner, drand beacon, execution fabric and the engines
-//! (differential, challenges, mutation; formal and adversary when an
-//! Anthropic API key is configured) into the orchestrator.
+//! (differential, challenges, mutation; formal when an Anthropic API key is
+//! configured; the rival agent with `REBUT_ADVERSARY` or that key) into the
+//! orchestrator.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
-use rebut_adversary::AdversaryEngine;
+use rebut_adversary::{AdversaryConfig, AdversaryEngine};
 use rebut_challenges::DrandClient;
 use rebut_control::wiring::{
     BaseChallenges, CheckoutDiff, CheckoutPlanner, DirSealedSpecs, DrandBeaconSource, GitCheckouts,
@@ -138,9 +139,30 @@ async fn main() -> anyhow::Result<()> {
         engines.push(Arc::new(
             FormalEngine::new(proposer).with_kani(Arc::new(FabricKaniRunner)),
         ));
-        engines.push(Arc::new(AdversaryEngine::anthropic_from_env()?));
     } else {
-        tracing::info!("ANTHROPIC_API_KEY unset: formal and adversary engines unavailable");
+        tracing::info!("ANTHROPIC_API_KEY unset: formal engine unavailable");
+    }
+    // `REBUT_ADVERSARY` picks the rival agent's provider (ADR-9); without
+    // it, Anthropic when a key is set, as before.
+    let adversary = match std::env::var("REBUT_ADVERSARY") {
+        Ok(spec) => AdversaryConfig::parse(
+            &spec,
+            std::env::var("REBUT_ADVERSARY_URL").ok(),
+            std::env::var("REBUT_ADVERSARY_MODEL").ok(),
+        )
+        .context("REBUT_ADVERSARY")?
+        .map(|c| c.build().map(AdversaryEngine::new))
+        .transpose()?,
+        Err(_) if config.anthropic_api_key.is_some() => {
+            Some(AdversaryEngine::anthropic_from_env()?)
+        }
+        Err(_) => None,
+    };
+    match adversary {
+        Some(engine) => engines.push(Arc::new(engine)),
+        None => {
+            tracing::info!("rival agent unavailable (set REBUT_ADVERSARY or ANTHROPIC_API_KEY)")
+        }
     }
 
     let orchestrator = Arc::new(Orchestrator {
