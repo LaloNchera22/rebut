@@ -20,7 +20,7 @@ didn't pick inputs to fail (or pass) a particular PR.
   unknown when the commit was made, so the commit can't depend on it. And it is
   public and verifiable (BLS signature from the League of Entropy), so anyone can
   recompute the seed and regenerate the exact public challenges
-  (`rebut challenges regenerate`).
+  (`verifier challenges regenerate`).
 - `generator_version` is bumped whenever generation changes, so old receipts stay
   reproducible with the old generator. Sub-streams use `Seed::fork(label)`, so adding a
   challenge family never shifts another family's inputs.

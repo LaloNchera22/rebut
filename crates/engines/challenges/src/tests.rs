@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use rebut_core::{
+use verifier_core::{
     CommitSha, ExecutionRequest, Executor, ImpactPlan, IntentManifest, Policy, PullRequest, RepoId,
     Seed,
 };
@@ -62,7 +62,9 @@ impl Executor for Fake {
                     }
                     (code, out)
                 }
-                Step::Test { .. } => unreachable!("challenges never run tests"),
+                Step::Test { .. } | Step::Mutants { .. } | Step::Kani { .. } => {
+                    unreachable!("challenges only build and run harnesses")
+                }
             };
             outcomes.push(StepOutcome {
                 step_index: i,
@@ -356,7 +358,7 @@ fn from_base_checkout_reads_specs() {
         .unwrap()
         .public_specs
         .is_none());
-    std::fs::create_dir_all(dir.join(".rebut")).unwrap();
+    std::fs::create_dir_all(dir.join(".verifier")).unwrap();
     std::fs::write(dir.join(PUBLIC_SPECS_PATH), PUBLIC).unwrap();
     let e = ChallengesEngine::from_base_checkout(&dir).unwrap();
     assert_eq!(e.public_specs.as_deref(), Some(PUBLIC));
@@ -445,7 +447,7 @@ mod mylib {
         assert!(out.started);
         assert_eq!(out.cases.len(), 40, "{}", ch.spec.id);
         for (i, case) in cases.iter().enumerate() {
-            use rebut_differential::harness::Value;
+            use verifier_differential::harness::Value;
             let got = out.cases[&i].as_str();
             let want = match (ch.spec.id.as_str(), &case[0]) {
                 ("parse", Value::Str(s)) => {

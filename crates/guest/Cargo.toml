@@ -1,17 +1,16 @@
 [package]
-name = "rebut-guest"
+name = "verifier-guest"
 description = "In-VM agent: vsock protocol, source unpacking and deterministic step execution."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-repository.workspace = true
 
 [lib]
 path = "src/lib.rs"
 
 [[bin]]
-name = "rebut-guest"
+name = "verifier-guest"
 path = "src/main.rs"
 
 [features]
@@ -19,7 +18,7 @@ default = ["vsock"]
 vsock = ["dep:tokio-vsock"]
 
 [dependencies]
-rebut-core.workspace = true
+verifier-core.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true

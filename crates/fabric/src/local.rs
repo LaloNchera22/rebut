@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rebut_core::{Digest, ExecutionRequest, ExecutionResult, Executor};
+use verifier_core::{Digest, ExecutionRequest, ExecutionResult, Executor};
 
 use crate::session::{fill_timed_out, run_session};
 use crate::source::SourceProvider;
@@ -15,7 +15,7 @@ const HARD_DEADLINE_GRACE: Duration = Duration::from_secs(10);
 /// Environment digest reported by this executor. Distinct from any VM
 /// environment so receipts can never pass a local run off as isolated.
 pub fn local_environment_digest() -> Digest {
-    Digest::of(b"rebut/environment/local-insecure/v1")
+    Digest::of(b"verifier/environment/local-insecure/v1")
 }
 
 /// Runs the guest agent in-process, with cargo executing on the host in a
@@ -23,13 +23,13 @@ pub fn local_environment_digest() -> Digest {
 /// proc-macros and tests of the code under test run with your privileges and
 /// your network access.
 ///
-/// Only for running the Rebut on your own code (the CLI's local mode) and
+/// Only for running the verifier on your own code (the CLI's local mode) and
 /// for tests. Never use it on untrusted pull requests; production uses
 /// [`crate::FirecrackerExecutor`].
 ///
 /// It goes through the same protocol path as the VM executor (framed
 /// messages over an in-memory duplex pipe, tarball unpacking, the guest
-/// [`rebut_guest::Runner`]), so it exercises the real guest logic.
+/// [`verifier_guest::Runner`]), so it exercises the real guest logic.
 pub struct LocalProcessExecutor {
     source: Arc<dyn SourceProvider>,
 }
@@ -52,13 +52,15 @@ impl Executor for LocalProcessExecutor {
     async fn execute(&self, req: ExecutionRequest) -> anyhow::Result<ExecutionResult> {
         tracing::warn!(request = %req.id, "executing WITHOUT a sandbox (LocalProcessExecutor)");
         let tgz = self.source.fetch(&req).await?;
-        let work_root = tempfile::Builder::new().prefix("rebut-local-").tempdir()?;
+        let work_root = tempfile::Builder::new()
+            .prefix("verifier-local-")
+            .tempdir()?;
 
         let (host, guest) = tokio::io::duplex(1 << 20);
         let guest_root = work_root.path().to_path_buf();
         let guest_task = tokio::spawn(async move {
             let (r, w) = tokio::io::split(guest);
-            rebut_guest::serve_connection(r, w, &guest_root).await
+            verifier_guest::serve_connection(r, w, &guest_root).await
         });
 
         let mut outcomes = Vec::with_capacity(req.steps.len());

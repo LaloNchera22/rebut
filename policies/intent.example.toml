@@ -1,6 +1,6 @@
 # Intent manifest: what the contributor claims this PR does.
-# Put it in `.rebut/intent.toml` in the PR (head), or in the PR body as a
-# fenced block tagged `rebut-intent`. The file wins if both exist.
+# Put it in `.verifier/intent.toml` in the PR (head), or in the PR body as a
+# fenced block tagged `verifier-intent`. The file wins if both exist.
 #
 # kind:
 #   "refactor"     no observable behavior change anywhere

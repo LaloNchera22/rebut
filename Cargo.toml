@@ -25,18 +25,18 @@ rust-version = "1.80"
 repository = "https://github.com/LaloNchera22/rebut"
 
 [workspace.dependencies]
-rebut-core = { path = "crates/core", version = "0.1.0" }
-rebut-planner = { path = "crates/planner", version = "0.1.0" }
-rebut-fabric = { path = "crates/fabric", version = "0.1.0" }
-rebut-guest = { path = "crates/guest", version = "0.1.0" }
-rebut-differential = { path = "crates/engines/differential", version = "0.1.0" }
-rebut-challenges = { path = "crates/engines/challenges", version = "0.1.0" }
-rebut-mutation = { path = "crates/engines/mutation", version = "0.1.0" }
-rebut-formal = { path = "crates/engines/formal", version = "0.1.0" }
-rebut-adversary = { path = "crates/adversary", version = "0.1.0" }
-rebut-receipts = { path = "crates/receipts", version = "0.1.0" }
-rebut-reputation = { path = "crates/reputation", version = "0.1.0" }
-rebut-control = { path = "crates/control", version = "0.1.0" }
+verifier-core = { path = "crates/core" }
+verifier-planner = { path = "crates/planner" }
+verifier-fabric = { path = "crates/fabric" }
+verifier-guest = { path = "crates/guest" }
+verifier-differential = { path = "crates/engines/differential" }
+verifier-challenges = { path = "crates/engines/challenges" }
+verifier-mutation = { path = "crates/engines/mutation" }
+verifier-formal = { path = "crates/engines/formal" }
+verifier-adversary = { path = "crates/adversary" }
+verifier-receipts = { path = "crates/receipts" }
+verifier-reputation = { path = "crates/reputation" }
+verifier-control = { path = "crates/control" }
 
 anyhow = "1"
 thiserror = "2"
@@ -64,3 +64,6 @@ clap = { version = "4", features = ["derive", "env"] }
 syn = { version = "2", features = ["full", "visit", "extra-traits"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 tempfile = "3"
+# BBS signatures, blind issuance and pseudonyms (IETF CFRG drafts), ADR-8.
+# Pinned exactly: a crypto dependency is upgraded on purpose, not by `cargo update`.
+zkryptium = { version = "=0.7.1", default-features = false, features = ["bbsplus", "bbsplus_blind", "bbsplus_nym"] }

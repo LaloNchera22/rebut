@@ -8,9 +8,9 @@ use axum::{
     Json,
 };
 use hmac::{Hmac, Mac};
-use rebut_core::{CommitSha, PullRequest, RepoId};
 use serde::Deserialize;
 use sha2::Sha256;
+use verifier_core::{CommitSha, PullRequest, RepoId};
 
 use crate::api::AppState;
 use crate::queue::Enqueued;

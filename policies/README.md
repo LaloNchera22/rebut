@@ -1,8 +1,8 @@
 # Policies
 
-A repository opts in by committing **`.rebut/policy.toml`** on its default branch.
+A repository opts in by committing **`.verifier/policy.toml`** on its default branch.
 
-The Rebut always reads the policy from the PR's **base** commit, never from the
+The verifier always reads the policy from the PR's **base** commit, never from the
 head. A pull request can't relax its own checks: a change to the policy applies
 only to PRs opened after it has been merged.
 
@@ -10,14 +10,14 @@ only to PRs opened after it has been merged.
 |---|---|
 | [`default.toml`](default.toml) | Phase-1 default: `mode = "mark"`, differential + challenges. Annotates, never fails a PR. |
 | [`strict.toml`](strict.toml) | `mode = "block"`, all engines, sealed challenge commitments, larger budget. |
-| [`intent.example.toml`](intent.example.toml) | Example **intent manifest** (`.rebut/intent.toml` in the PR, or a `rebut-intent` block in the PR body). |
+| [`intent.example.toml`](intent.example.toml) | Example **intent manifest** (`.verifier/intent.toml` in the PR, or a `verifier-intent` block in the PR body). |
 
 An empty or missing policy file means the defaults: mark mode, `differential` +
 `challenges`, and the budget shown in `default.toml`.
 
 ## Fields
 
-These match `rebut_core::Policy` exactly. Unknown keys are ignored. Missing keys
+These match `verifier_core::Policy` exactly. Unknown keys are ignored. Missing keys
 take their defaults, except inside `[budget]`: if you write a `[budget]` table, give
 all five keys.
 
@@ -35,7 +35,7 @@ all five keys.
 ## Sealed challenges
 
 Sealed challenge specs stay private to the maintainer and are supplied to the
-rebut out of band. Only their SHA-256 goes in `sealed_commitments`. That way the
+verifier out of band. Only their SHA-256 goes in `sealed_commitments`. That way the
 spec can't be swapped after a PR is seen, and the maintainer can later prove which
 spec was used. Contributors who fail a sealed challenge learn only its category. See
 the [threat model](../docs/threat-model.md#sealed-challenge-exfiltration).

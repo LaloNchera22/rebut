@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use rebut_challenges::DrandClient;
-use rebut_mcp::Server;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use verifier_challenges::DrandClient;
+use verifier_mcp::Server;
 
 /// Line-delimited JSON-RPC over stdio. Logs go to stderr; stdout is protocol.
 #[tokio::main]
@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn,rebut_fabric::local=error".into()),
+                .unwrap_or_else(|_| "warn,verifier_fabric::local=error".into()),
         )
         .init();
     let server = Server::new(Arc::new(DrandClient::quicknet()?));

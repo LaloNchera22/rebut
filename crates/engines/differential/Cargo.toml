@@ -1,14 +1,13 @@
 [package]
-name = "rebut-differential"
+name = "verifier-differential"
 description = "Differential engine: base vs head on generated inputs, plus test regressions."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-repository.workspace = true
 
 [dependencies]
-rebut-core.workspace = true
+verifier-core.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 hex.workspace = true

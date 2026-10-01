@@ -1,7 +1,7 @@
 //! RFC 6962 / RFC 9162 Merkle tree hashing and inclusion proofs.
 
-use rebut_core::Digest;
 use sha2::{Digest as _, Sha256};
+use verifier_core::Digest;
 
 /// `SHA-256(0x00 || data)`.
 pub fn leaf_hash(data: &[u8]) -> Digest {

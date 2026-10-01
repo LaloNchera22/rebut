@@ -1,6 +1,8 @@
 //! Execution helpers shared by engines that talk to the fabric.
 
-use rebut_core::{CommitSha, EngineContext, ExecutionRequest, ExecutionResult, Step, StepOutcome};
+use verifier_core::{
+    CommitSha, EngineContext, ExecutionRequest, ExecutionResult, Step, StepOutcome,
+};
 
 /// Which commit of the PR a request runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

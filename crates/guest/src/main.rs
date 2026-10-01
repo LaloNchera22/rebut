@@ -1,4 +1,4 @@
-//! `rebut-guest` binary: serves protocol sessions on vsock (inside the VM)
+//! `verifier-guest` binary: serves protocol sessions on vsock (inside the VM)
 //! or on stdin/stdout (`--stdio`, for testing).
 //!
 //! The VM's init mounts the ephemeral scratch drive and starts this binary
@@ -10,13 +10,13 @@ use anyhow::Context as _;
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "rebut-guest", about = "In-VM execution agent")]
+#[command(name = "verifier-guest", about = "In-VM execution agent")]
 struct Args {
     /// Serve a single session over stdin/stdout instead of vsock.
     #[arg(long)]
     stdio: bool,
     /// vsock port to listen on.
-    #[arg(long, default_value_t = rebut_guest::protocol::GUEST_VSOCK_PORT)]
+    #[arg(long, default_value_t = verifier_guest::protocol::GUEST_VSOCK_PORT)]
     port: u32,
     /// Directory where sources are unpacked (the scratch drive).
     #[arg(long, default_value = "/scratch")]
@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("creating {}", args.work_root.display()))?;
 
     if args.stdio {
-        rebut_guest::serve_connection(tokio::io::stdin(), tokio::io::stdout(), &args.work_root)
+        verifier_guest::serve_connection(tokio::io::stdin(), tokio::io::stdout(), &args.work_root)
             .await?;
         return Ok(());
     }
@@ -56,7 +56,7 @@ async fn serve_vsock(args: Args) -> anyhow::Result<()> {
         let (stream, peer) = listener.accept().await?;
         tracing::info!(?peer, "host connected");
         let (r, w) = stream.into_split();
-        if let Err(e) = rebut_guest::serve_connection(r, w, &args.work_root).await {
+        if let Err(e) = verifier_guest::serve_connection(r, w, &args.work_root).await {
             tracing::error!(error = %e, "session failed");
         }
     }

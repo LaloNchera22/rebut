@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use rebut_core::{Digest, ExecutionRequest};
 use tokio::io::{AsyncRead, AsyncWrite};
+use verifier_core::{Digest, ExecutionRequest};
 
 use crate::archive::unpack_tarball;
 use crate::protocol::{
@@ -117,9 +117,9 @@ async fn receive<R: AsyncRead + Unpin>(
 mod tests {
     use super::*;
     use crate::protocol::SourceManifest;
-    use rebut_core::{CommitSha, Step};
     use std::collections::BTreeMap;
     use tokio::io::duplex;
+    use verifier_core::{CommitSha, Step};
 
     fn request() -> ExecutionRequest {
         ExecutionRequest {

@@ -12,15 +12,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use rebut_challenges::drand;
-use rebut_challenges::ChallengesEngine;
-use rebut_core::{
+use time::OffsetDateTime;
+use tokio::process::Command;
+use verifier_challenges::drand;
+use verifier_challenges::ChallengesEngine;
+use verifier_core::{
     CommitSha, DrandBeacon, Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest,
     ImpactPlan, PullRequest, RepoId,
 };
-use rebut_fabric::SourceProvider;
-use time::OffsetDateTime;
-use tokio::process::Command;
+use verifier_fabric::SourceProvider;
 
 use crate::orchestrator::{BeaconSource, Planner, SealedSpecSource};
 
@@ -136,8 +136,9 @@ pub struct GitSource(pub GitCheckouts);
 impl SourceProvider for GitSource {
     async fn fetch(&self, req: &ExecutionRequest) -> anyhow::Result<Vec<u8>> {
         let dir = self.0.checkout(&req.repo_url, &req.commit).await?;
-        let tgz = tokio::task::spawn_blocking(move || rebut_guest::archive::pack_directory(&dir))
-            .await??;
+        let tgz =
+            tokio::task::spawn_blocking(move || verifier_guest::archive::pack_directory(&dir))
+                .await??;
         Ok(tgz)
     }
 }
@@ -150,8 +151,78 @@ impl Planner for CheckoutPlanner {
     async fn plan(&self, pr: &PullRequest) -> anyhow::Result<ImpactPlan> {
         let base = self.0.checkout(&pr.base_clone_url, &pr.base_sha).await?;
         let head = self.0.checkout(&pr.head_clone_url, &pr.head_sha).await?;
-        tokio::task::spawn_blocking(move || rebut_planner::plan(&base, &head)).await?
+        tokio::task::spawn_blocking(move || verifier_planner::plan(&base, &head)).await?
     }
+}
+
+/// Unified diff base..head over the cached checkouts, for the mutation
+/// engine's `--in-diff`. Paths are relative to the repository root
+/// (`a/src/lib.rs`), as `git diff` prints them.
+pub struct CheckoutDiff(pub GitCheckouts);
+
+#[async_trait::async_trait]
+impl verifier_mutation::DiffSource for CheckoutDiff {
+    async fn diff(&self, ctx: &EngineContext) -> anyhow::Result<String> {
+        let pr = &ctx.pr;
+        let base = self.0.checkout(&pr.base_clone_url, &pr.base_sha).await?;
+        let head = self.0.checkout(&pr.head_clone_url, &pr.head_sha).await?;
+        unified_diff(&base, &head).await
+    }
+}
+
+/// `git diff --no-index` between two directories, with both sides' prefixes
+/// rewritten to `a/` and `b/`. Exit code 1 just means "they differ".
+pub async fn unified_diff(base: &Path, head: &Path) -> anyhow::Result<String> {
+    let out = Command::new("git")
+        .args(["-c", "core.hooksPath=/dev/null"])
+        .args([
+            "diff",
+            "--no-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-renames",
+        ])
+        .args(["--src-prefix=a/", "--dst-prefix=b/", "--"])
+        .arg(base)
+        .arg(head)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .context("running git diff")?;
+    if !matches!(out.status.code(), Some(0 | 1)) {
+        bail!(
+            "git diff failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    // git prints the directories as given, minus the leading `/`.
+    let strip = |p: &Path| {
+        let s = p.to_string_lossy();
+        format!("{}/", s.trim_start_matches('/').trim_end_matches('/'))
+    };
+    // Added and deleted files name the same side on both prefixes.
+    let rewrites = [
+        (format!("a/{}", strip(base)), "a/"),
+        (format!("a/{}", strip(head)), "a/"),
+        (format!("b/{}", strip(head)), "b/"),
+        (format!("b/{}", strip(base)), "b/"),
+    ];
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut diff = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("diff --git ") || line.starts_with("--- ") || line.starts_with("+++ ") {
+            let mut line = line.to_string();
+            for (from, to) in &rewrites {
+                line = line.replace(from.as_str(), to);
+            }
+            diff.push_str(&line);
+        } else {
+            diff.push_str(line);
+        }
+    }
+    Ok(diff)
 }
 
 /// drand quicknet (ADR-7): waits for the first round after the push, then
@@ -286,6 +357,39 @@ mod tests {
         // Cached: works even once the source is gone.
         drop(src);
         assert_eq!(co.checkout(&url, &sha).await.unwrap(), dir);
+    }
+
+    #[tokio::test]
+    async fn unified_diff_is_relative_to_the_repo_root() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, head) = (root.path().join("base"), root.path().join("head"));
+        for (dir, body) in [
+            (&base, "fn f() -> u8 { 1 }\n"),
+            (&head, "fn f() -> u8 { 2 }\n"),
+        ] {
+            std::fs::create_dir_all(dir.join("src")).unwrap();
+            std::fs::write(dir.join("src/lib.rs"), body).unwrap();
+            std::fs::write(dir.join("README"), "same\n").unwrap();
+        }
+        std::fs::write(head.join("src/new.rs"), "pub fn g() {}\n").unwrap();
+        let diff = unified_diff(&base, &head).await.unwrap();
+        assert!(
+            diff.contains("diff --git a/src/lib.rs b/src/lib.rs\n"),
+            "{diff}"
+        );
+        assert!(
+            diff.contains("--- a/src/lib.rs\n+++ b/src/lib.rs\n"),
+            "{diff}"
+        );
+        assert!(
+            diff.contains("diff --git a/src/new.rs b/src/new.rs\n"),
+            "{diff}"
+        );
+        assert!(diff.contains("--- /dev/null\n+++ b/src/new.rs\n"), "{diff}");
+        assert!(diff.contains("-fn f() -> u8 { 1 }\n+fn f() -> u8 { 2 }\n"));
+        assert!(!diff.contains("README"));
+        assert!(!diff.contains(&*root.path().to_string_lossy()));
+        assert!(unified_diff(&base, &base).await.unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -1,14 +1,14 @@
 //! The forge (GitHub today): read files at a commit, publish check runs.
 //!
 //! Everything shown on the forge is rendered from a [`ContributorReport`],
-//! never from a [`rebut_core::Verdict`], so sealed challenge details cannot
+//! never from a [`verifier_core::Verdict`], so sealed challenge details cannot
 //! leak through the check run.
 
 use std::fmt::Write as _;
 
-use rebut_core::{CommitSha, ContributorReport, EnforcementMode, RepoId, VerdictStatus};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use verifier_core::{CommitSha, ContributorReport, EnforcementMode, RepoId, VerdictStatus};
 
 pub const CHECK_NAME: &str = "rebut / verify";
 
@@ -178,7 +178,7 @@ pub fn check_run(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use rebut_core::*;
+    use verifier_core::*;
 
     pub fn finding(visibility: Visibility, secret: &[u8], explained: bool) -> Finding {
         let result = ExecutionResult {

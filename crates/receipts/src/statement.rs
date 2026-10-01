@@ -2,10 +2,12 @@
 
 use std::collections::BTreeMap;
 
-use rebut_core::{
+use serde::{Deserialize, Serialize};
+use verifier_core::{
     Digest, DrandBeacon, EnforcementMode, EngineKind, Verdict, VerdictStatus, Visibility,
 };
-use serde::{Deserialize, Serialize};
+
+use crate::attest::Attestation;
 
 pub const STATEMENT_TYPE: &str = "https://in-toto.io/Statement/v1";
 /// Placeholder domain until the project has a permanent one.
@@ -41,7 +43,31 @@ pub struct VerificationPredicate {
     pub policy_digest: Digest,
     /// Digests of every microVM environment (rootfs/kernel/snapshot) used.
     pub environment_digests: Vec<Digest>,
-    pub rebut_version: String,
+    pub verifier_version: String,
+    /// Who signed the envelope around this statement. Absent in phase-1
+    /// receipts, which decode as [`SignerIdentity::OperatorKey`].
+    #[serde(default)]
+    pub signer: SignerIdentity,
+}
+
+/// The kind of key that signs a receipt (ADR-5). Serialized as
+/// `{"type": "operator-key"}` or `{"type": "tee", "attestation": {...}}`.
+///
+/// This is the signer's *claim*; [`crate::verify_envelope`] does not check it.
+/// [`crate::verify_receipt_with_policy`] does.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum SignerIdentity {
+    /// Phase 1: a key held by the operator. You trust the operator.
+    #[default]
+    OperatorKey,
+    /// Phase 2: a key generated inside a TEE, bound to a measured signer
+    /// build by `attestation`.
+    Tee { attestation: Attestation },
+    /// A signer type this version does not know. Decodes so that receipts
+    /// from newer signers still parse; never accepted by a policy.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Everything needed to recompute the seed (ADR-7).
@@ -71,7 +97,7 @@ pub struct ReceiptContext {
     pub environment_digests: Vec<Digest>,
     pub beacon: Option<DrandBeacon>,
     pub generator_version: String,
-    pub rebut_version: String,
+    pub verifier_version: String,
 }
 
 pub fn build_statement(verdict: &Verdict, ctx: &ReceiptContext) -> Statement {
@@ -119,7 +145,8 @@ pub fn build_statement(verdict: &Verdict, ctx: &ReceiptContext) -> Statement {
             inconclusive_reason: verdict.inconclusive_reason.clone(),
             policy_digest: ctx.policy_digest,
             environment_digests,
-            rebut_version: ctx.rebut_version.clone(),
+            verifier_version: ctx.verifier_version.clone(),
+            signer: SignerIdentity::OperatorKey,
         },
     }
 }
@@ -127,7 +154,7 @@ pub fn build_statement(verdict: &Verdict, ctx: &ReceiptContext) -> Statement {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use rebut_core::*;
+    use verifier_core::*;
 
     pub fn sample_verdict(secret: &[u8]) -> Verdict {
         let result = ExecutionResult {
@@ -186,7 +213,7 @@ pub(crate) mod tests {
                 signature: "cd".into(),
             }),
             generator_version: GENERATOR_VERSION.into(),
-            rebut_version: "0.1.0".into(),
+            verifier_version: "0.1.0".into(),
         }
     }
 
@@ -211,7 +238,28 @@ pub(crate) mod tests {
                 .len(),
             1
         );
+        assert_eq!(
+            json["predicate"]["signer"],
+            serde_json::json!({"type": "operator-key"})
+        );
         let text = json.to_string();
         assert!(!text.contains("SECRET"));
+    }
+
+    #[test]
+    fn signer_identity_is_backward_and_forward_compatible() {
+        let st = build_statement(&sample_verdict(b"x"), &sample_ctx());
+        let mut json = serde_json::to_value(&st).unwrap();
+
+        // Phase-1 statements have no `signer` field.
+        json["predicate"].as_object_mut().unwrap().remove("signer");
+        let old: Statement = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(old.predicate.signer, SignerIdentity::OperatorKey);
+        assert_eq!(old, st);
+
+        // A future signer type still decodes.
+        json["predicate"]["signer"] = serde_json::json!({"type": "zk-proof", "proof": "..."});
+        let future: Statement = serde_json::from_value(json).unwrap();
+        assert_eq!(future.predicate.signer, SignerIdentity::Unknown);
     }
 }

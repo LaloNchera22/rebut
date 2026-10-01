@@ -4,7 +4,7 @@
 //! * Firecracker runs under `jailer` (chroot, unprivileged uid/gid, new PID
 //!   namespace, cgroup v2 CPU/memory limits) with its seccomp filter on.
 //! * The VM has **no network device** ([`vmconfig`] cannot express one); the
-//!   only channel is vsock, carrying the framed [`rebut_guest::protocol`].
+//!   only channel is vsock, carrying the framed [`verifier_guest::protocol`].
 //! * Each request gets a fresh VM: cold-booted from a read-only rootfs, or
 //!   restored from a [`SnapshotCache`] snapshot holding a warm cargo cache for
 //!   the repository. The VM, its jail and its scratch drive are destroyed
@@ -14,7 +14,7 @@
 //! Rootfs contract: an init that mounts tmpfs over the writable paths,
 //! formats/mounts the scratch drive (`/dev/vdb`) at `/scratch`, mounts the
 //! optional cargo cache drive read-only as `CARGO_HOME`, and runs
-//! `rebut-guest --work-root /scratch`. Snapshots must be taken with the
+//! `verifier-guest --work-root /scratch`. Snapshots must be taken with the
 //! agent listening and the scratch drive not yet mounted, since the drive is
 //! recreated empty for every restore.
 
@@ -28,8 +28,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use rebut_core::{Digest, ExecutionRequest, ExecutionResult, Executor};
-use rebut_guest::protocol::GUEST_VSOCK_PORT;
+use verifier_core::{Digest, ExecutionRequest, ExecutionResult, Executor};
+use verifier_guest::protocol::GUEST_VSOCK_PORT;
 
 use crate::session::{fill_timed_out, run_session};
 use crate::snapshot::{digest_file, SnapshotCache, SnapshotEntry, SnapshotKey};
@@ -60,7 +60,7 @@ pub struct FirecrackerConfig {
 /// the code ran on.
 pub fn environment_digest(kernel: &Digest, rootfs: &Digest, snapshot: Option<&Digest>) -> Digest {
     Digest::of_parts(&[
-        b"rebut/environment/firecracker/v1",
+        b"verifier/environment/firecracker/v1",
         &kernel.0,
         &rootfs.0,
         snapshot.map(|d| &d.0[..]).unwrap_or_default(),
@@ -101,7 +101,7 @@ impl FirecrackerExecutor {
 
     fn find_snapshot(&self, req: &ExecutionRequest, tgz: &[u8]) -> Option<SnapshotEntry> {
         let cache = self.snapshots.as_ref()?;
-        let lock = rebut_guest::archive::read_file(tgz, Path::new("Cargo.lock")).ok()??;
+        let lock = verifier_guest::archive::read_file(tgz, Path::new("Cargo.lock")).ok()??;
         cache.get(&SnapshotKey {
             repo: req.repo_url.clone(),
             cargo_lock: Digest::of(&lock),
@@ -369,7 +369,7 @@ mod tests {
         let req = ExecutionRequest {
             id: uuid::Uuid::new_v4(),
             repo_url: "local".into(),
-            commit: rebut_core::CommitSha::new("c".repeat(40)).unwrap(),
+            commit: verifier_core::CommitSha::new("c".repeat(40)).unwrap(),
             steps: vec![],
             timeout_secs: 1,
             vcpus: 1,

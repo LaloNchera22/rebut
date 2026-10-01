@@ -6,23 +6,23 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use rebut_core::{
+use time::OffsetDateTime;
+use tracing::Instrument;
+use uuid::Uuid;
+use verifier_core::{
     Budget, Digest, DrandBeacon, Engine, EngineContext, EngineKind, ExecutionRequest,
     ExecutionResult, Executor, Finding, ImpactPlan, IntentManifest, Policy, PullRequest, RepoId,
     Seed, Verdict, VerdictStatus, GENERATOR_VERSION,
 };
-use rebut_receipts::{ReceiptContext, Signer, TransparencyLog};
-use time::OffsetDateTime;
-use tracing::Instrument;
-use uuid::Uuid;
+use verifier_receipts::{ReceiptContext, Signer, TransparencyLog};
 
 use crate::forge::{check_run, Forge, ReceiptRef};
 use crate::queue::Job;
 use crate::store::{RunRecord, Store};
 
-pub const POLICY_PATH: &str = ".rebut/policy.toml";
-pub const INTENT_PATH: &str = ".rebut/intent.toml";
-pub const REBUT_VERSION: &str = concat!("rebut-control/", env!("CARGO_PKG_VERSION"));
+pub const POLICY_PATH: &str = ".verifier/policy.toml";
+pub const INTENT_PATH: &str = ".verifier/intent.toml";
+pub const VERIFIER_VERSION: &str = concat!("verifier-control/", env!("CARGO_PKG_VERSION"));
 
 /// Produces the impact plan for a PR. The real implementation is the planner
 /// crate; the control plane only depends on this seam.
@@ -100,7 +100,7 @@ impl Orchestrator {
             },
         };
         let policy_digest = Digest::of_parts(&[
-            b"rebut/policy/v1",
+            b"verifier/policy/v1",
             &serde_json::to_vec(&policy).expect("policy serializes"),
         ]);
 
@@ -146,9 +146,9 @@ impl Orchestrator {
             environment_digests: metered.environments(),
             beacon,
             generator_version: GENERATOR_VERSION.to_string(),
-            rebut_version: REBUT_VERSION.to_string(),
+            verifier_version: VERIFIER_VERSION.to_string(),
         };
-        let envelope = rebut_receipts::sign_verdict(&verdict, &ctx, self.signer.as_ref())
+        let envelope = verifier_receipts::sign_verdict(&verdict, &ctx, self.signer.as_ref())
             .await
             .context("signing receipt")?;
         let entry = self
@@ -196,7 +196,7 @@ impl Orchestrator {
         })
     }
 
-    /// Head `.rebut/intent.toml` wins over a block in the PR body. An
+    /// Head `.verifier/intent.toml` wins over a block in the PR body. An
     /// unparsable manifest falls back to `Unspecified`, which claims nothing.
     async fn intent(&self, pr: &PullRequest) -> anyhow::Result<IntentManifest> {
         let parsed = match self
@@ -278,6 +278,15 @@ impl Orchestrator {
                     }
                     run.findings.extend(report.findings);
                     run.engines_run.push(*kind);
+                }
+                // The mutation engine only yields hypotheses (ADR-6); its
+                // failing can't hide a finding, so it never costs the
+                // contributor an inconclusive verdict.
+                Ok(Err(e)) if *kind == EngineKind::Mutation => {
+                    tracing::warn!(error = %format!("{e:#}"), "mutation engine failed");
+                }
+                Err(_) if *kind == EngineKind::Mutation => {
+                    tracing::warn!("mutation engine ran out of VM budget");
                 }
                 Ok(Err(e)) => run
                     .inconclusive
@@ -392,9 +401,9 @@ mod tests {
     use crate::forge::{CheckRun, Conclusion};
     use crate::queue::{InMemoryQueue, JobQueue};
     use crate::store::InMemoryStore;
-    use rebut_core::*;
-    use rebut_receipts::{verify_envelope, Ed25519Signer, InMemoryLog};
     use std::collections::HashMap;
+    use verifier_core::*;
+    use verifier_receipts::{verify_envelope, Ed25519Signer, InMemoryLog};
 
     #[derive(Default)]
     pub struct FakeForge {
@@ -564,7 +573,7 @@ mod tests {
             planner: Arc::new(FakePlanner),
             beacon: Arc::new(FakeBeacon),
             sealed: Arc::new(NoSealedSpecs),
-            public_url: Some("https://rebut.example".into()),
+            public_url: Some("https://verifier.example".into()),
         };
         Fixture {
             orch,
@@ -634,7 +643,7 @@ mod tests {
         assert!(checks[0].summary.contains("category `integer-overflow`"));
         assert!(checks[0]
             .summary
-            .contains(&format!("rebut.example/v1/receipts/{}", out.run_id)));
+            .contains(&format!("verifier.example/v1/receipts/{}", out.run_id)));
     }
 
     #[tokio::test]
@@ -677,6 +686,38 @@ mod tests {
             fx.forge.checks.lock().unwrap()[0].conclusion,
             Conclusion::Neutral
         );
+    }
+
+    struct FailingEngine(EngineKind);
+
+    #[async_trait::async_trait]
+    impl Engine for FailingEngine {
+        fn kind(&self) -> EngineKind {
+            self.0
+        }
+        async fn run(&self, _: &EngineContext) -> anyhow::Result<EngineReport> {
+            anyhow::bail!("tool missing in the VM")
+        }
+    }
+
+    #[tokio::test]
+    async fn failing_mutation_engine_is_verdict_neutral() {
+        let policy = "engines = [\"mutation\", \"differential\"]\n";
+        let fx = fixture(
+            vec![
+                Arc::new(FailingEngine(EngineKind::Mutation)),
+                Arc::new(BurnEngine(EngineKind::Differential, 1)),
+            ],
+            &[('a', POLICY_PATH, policy)],
+        );
+        let out = fx.orch.process(&job().await).await.unwrap();
+        assert_eq!(out.status, VerdictStatus::Pass);
+        let fx = fixture(
+            vec![Arc::new(FailingEngine(EngineKind::Formal))],
+            &[('a', POLICY_PATH, "engines = [\"formal\"]\n")],
+        );
+        let out = fx.orch.process(&job().await).await.unwrap();
+        assert_eq!(out.status, VerdictStatus::Inconclusive);
     }
 
     #[tokio::test]

@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn rejects_absolute_paths() {
-        let tgz = raw_tar(|b| file_with_raw_path(b, "/tmp/rebut-evil", b"x"));
+        let tgz = raw_tar(|b| file_with_raw_path(b, "/tmp/verifier-evil", b"x"));
         let dst = tempfile::tempdir().unwrap();
         let err = unpack_tarball(&tgz, dst.path()).unwrap_err();
         assert!(matches!(err, ArchiveError::UnsafePath(_)), "{err}");

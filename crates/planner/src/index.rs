@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
-use rebut_core::FnSignature;
 use syn::{Attribute, FnArg, ImplItem, Item, ReturnType, Signature, TraitItem, Visibility};
+use verifier_core::FnSignature;
 
 use crate::files::Entry;
 

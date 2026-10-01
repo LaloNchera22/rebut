@@ -1,12 +1,12 @@
 //! Host side of a guest session: send the request and source, collect
 //! `StepDone` frames until `Finished`.
 
-use rebut_core::{Digest, ExecutionRequest, StepOutcome};
-use rebut_guest::protocol::{
+use tokio::io::{AsyncRead, AsyncWrite};
+use verifier_core::{Digest, ExecutionRequest, StepOutcome};
+use verifier_guest::protocol::{
     read_frame, write_frame, FrameError, GuestMessage, HostMessage, SourceManifest,
     SOURCE_CHUNK_SIZE,
 };
-use tokio::io::{AsyncRead, AsyncWrite};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
@@ -125,8 +125,8 @@ pub(crate) fn fill_timed_out(req: &ExecutionRequest, outcomes: &mut Vec<StepOutc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rebut_core::{CommitSha, Step};
     use std::collections::BTreeMap;
+    use verifier_core::{CommitSha, Step};
 
     fn req(steps: usize) -> ExecutionRequest {
         ExecutionRequest {

@@ -3,7 +3,7 @@
 ## The attacker is every contributor
 
 We assume anyone who opens a pull request may be hostile, and that they know how the
-rebut works (this document included). They control the PR's code, its tests,
+verifier works (this document included). They control the PR's code, its tests,
 `build.rs`, proc-macros, `Cargo.toml`, the PR title and body, the intent manifest in
 the head commit, and the timing of their pushes. Their goals, from most to least
 damaging:
@@ -32,7 +32,7 @@ source with `syn` and never compiles or expands it on the host.
 
 ## Policy is read from the base branch
 
-**Threat.** A PR edits `.rebut/policy.toml` to switch to mark mode, disable
+**Threat.** A PR edits `.verifier/policy.toml` to switch to mark mode, disable
 engines, shrink budgets, or replace `sealed_commitments`.
 
 **Defense.** The policy is read from the **base** commit only. A policy change takes
@@ -57,7 +57,7 @@ We can't stop hostile code from *reading* its own inputs. We can control what ge
 *out*. Three defenses:
 
 1. **Asymmetric outputs.** For a sealed finding, the contributor learns only "failed a
-   challenge of category X". `Verdict::for_contributor` in `rebut-core` is the
+   challenge of category X". `Verdict::for_contributor` in `verifier-core` is the
    only projection shown to contributors, and it strips everything else (a unit test
    checks that the serialized report contains no byte of the sealed input).
 2. **Sealed runs return nothing to the contributor.** Requests marked
@@ -82,7 +82,7 @@ specific env vars, the snapshot's boot time, the hostname, the presence of the
 harness binary, test-only inputs, or simply `cfg(test)`.
 
 **Mitigations.** Make the environment as indistinguishable from a normal build as we
-can. Use standard toolchain paths, no rebut-specific env vars, realistic hostnames
+can. Use standard toolchain paths, no verifier-specific env vars, realistic hostnames
 and clocks, and randomness reseeded after snapshot restore. Run the *same* binary that
 would ship (release profile where possible), not a test-only variant. Differential
 testing helps, because base and head run in identical environments, so
@@ -92,7 +92,7 @@ divergence.
 **This is not solved.** Code that is determined to tell "am I being verified?" apart
 can find a signal we didn't erase, and it can behave perfectly in the VM. Verification
 shows how the code behaves *in our environment*. It doesn't prove how it behaves in
-production. We say so in every report. It is the main reason the Rebut supplements
+production. We say so in every report. It is the main reason the verifier supplements
 code review and does not replace it.
 
 ## Phase 1: you trust the operator
@@ -129,6 +129,31 @@ defenses:
   `Inconclusive`, which is never counted against the contributor.
 - **Mark, don't block.** Phase 1 defaults to `mode = "mark"`. Blocking is opt-in per
   repository.
+
+## Anonymous credentials (phase 3)
+
+**Threat.** A contributor forges or inflates a reputation credential, replays someone
+else's presentation, or claims a scoped benefit twice. A verifier, or several
+colluding verifiers, link presentations to deanonymize a contributor.
+
+**Defense** ([ADR-8](adr/0008-anonymous-credentials.md)). Credentials are BBS
+signatures by the issuer over attributes from the trust graph. A presentation is a
+zero-knowledge proof bound to the verifier's nonce (no replay) and scope. Predicates
+are signed booleans that the verifier rebuilds as "true", so a holder can't claim a
+bucket they don't have. Proofs are re-randomized, and pseudonyms for different scopes
+are unlinkable. Inputs are length-checked and identity points rejected before the BBS
+library sees them.
+
+**Residual.**
+
+- The BBS implementation (zkryptium 0.7.1) is experimental and unaudited.
+- A holder with two credentials has two nullifiers per scope. One claim per person
+  holds only if the issuer issues one credential per author per scope lifetime.
+- The issuer is trusted to compute attributes honestly; `ReceiptsCommitment` lets an
+  auditor with the receipts check it. Sybil resistance comes from receipts being
+  expensive to earn, not from the credentials.
+- Disclosed attributes leak what they say. An exact merge count, a first-merge day or
+  the receipts commitment can single out a contributor; prefer buckets.
 
 ## Out of scope (for now)
 

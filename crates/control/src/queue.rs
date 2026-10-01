@@ -8,11 +8,11 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use rebut_core::PullRequest;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
+use verifier_core::PullRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lease {
@@ -405,7 +405,7 @@ impl JobQueue for PgQueue {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use rebut_core::{CommitSha, RepoId};
+    use verifier_core::{CommitSha, RepoId};
 
     pub fn pr(number: u64, head: char) -> PullRequest {
         PullRequest {
@@ -501,7 +501,7 @@ pub(crate) mod tests {
     }
 
     /// Requires a Postgres database: `DATABASE_URL=postgres://... cargo test
-    /// -p rebut-control -- --ignored`.
+    /// -p verifier-control -- --ignored`.
     #[tokio::test]
     #[ignore = "needs DATABASE_URL pointing at a disposable Postgres"]
     async fn pg_queue_roundtrip() {

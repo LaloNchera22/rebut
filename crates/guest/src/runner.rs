@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use rebut_core::{ExecutionRequest, Step, StepOutcome};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
+use verifier_core::{ExecutionRequest, Step, StepOutcome};
 
 /// Maximum bytes kept from each of stdout and stderr per step.
 pub const OUTPUT_CAP: usize = 1024 * 1024;
@@ -23,6 +23,9 @@ pub const DEFAULT_SOURCE_DATE_EPOCH: &str = "315532800";
 
 /// Inherited variables that survive the environment scrub.
 const KEPT_VARS: &[&str] = &["PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME"];
+
+/// Scratch directory (relative to the workdir) for `Step::Mutants`.
+const MUTANTS_DIR: &str = "target/verifier-mutants";
 
 /// How long to wait for output pipes after the process group is gone.
 const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(5);
@@ -99,8 +102,27 @@ impl<'a> Runner<'a> {
                 outcome.timed_out = c.timed_out;
                 outcome.stdout = c.stdout;
                 outcome.stderr = c.stderr;
+                if let Some(Step::Mutants { .. }) = self.req.steps.get(index) {
+                    // stdout carries the machine-readable result; cargo-mutants'
+                    // human output moves to stderr.
+                    let human = std::mem::take(&mut outcome.stdout);
+                    outcome.stderr.extend_from_slice(&human);
+                    let path = self
+                        .workdir
+                        .join(MUTANTS_DIR)
+                        .join("mutants.out/outcomes.json");
+                    match std::fs::read(&path) {
+                        Ok(mut json) => {
+                            json.truncate(OUTPUT_CAP);
+                            outcome.stdout = json;
+                        }
+                        Err(e) => outcome.stderr.extend_from_slice(
+                            format!("verifier-guest: no outcomes.json: {e}\n").as_bytes(),
+                        ),
+                    }
+                }
             }
-            Err(msg) => outcome.stderr = format!("rebut-guest: {msg}\n").into_bytes(),
+            Err(msg) => outcome.stderr = format!("verifier-guest: {msg}\n").into_bytes(),
         }
         outcome.duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         outcome
@@ -141,10 +163,73 @@ impl<'a> Runner<'a> {
                     .args(["run", "--quiet", "--offline"]);
                 Ok((cmd, Some(input.clone())))
             }
+            Step::Mutants {
+                diff,
+                timeout_secs,
+                jobs,
+            } => {
+                let dir = self.workdir.join(MUTANTS_DIR);
+                let io = |e: std::io::Error| format!("preparing cargo-mutants: {e}");
+                std::fs::create_dir_all(&dir).map_err(io)?;
+                let diff_file = dir.join("pr.diff");
+                std::fs::write(&diff_file, diff).map_err(io)?;
+                let _ = std::fs::remove_dir_all(dir.join("mutants.out"));
+                let mut cmd = self.cargo(&self.workdir);
+                cmd.args(["mutants", "--in-diff"])
+                    .arg(&diff_file)
+                    .args(["--no-shuffle", "--output"])
+                    .arg(&dir)
+                    .args(["--timeout", &timeout_secs.to_string()])
+                    .args(["--jobs", &(*jobs).max(1).to_string()])
+                    .arg("--cargo-arg=--offline");
+                Ok((cmd, None))
+            }
+            Step::Kani { harness, source } => {
+                if !is_ident(harness) {
+                    return Err(format!("invalid harness name {harness:?}"));
+                }
+                let root = self.crate_root()?;
+                let io = |e: std::io::Error| format!("appending kani harness: {e}");
+                let mut existing = std::fs::read_to_string(&root).map_err(io)?;
+                existing.push('\n');
+                existing.push_str(source);
+                existing.push('\n');
+                std::fs::write(&root, existing).map_err(io)?;
+                let mut cmd = self.cargo(&self.workdir);
+                cmd.args(["kani", "--harness", harness]).args([
+                    "-Z",
+                    "concrete-playback",
+                    "--concrete-playback=print",
+                ]);
+                Ok((cmd, None))
+            }
         }
     }
 
-    /// Creates `target/rebut-harness/<name>`: a standalone binary crate
+    /// The library root named by `[lib] path`, or `src/lib.rs`.
+    fn crate_root(&self) -> Result<PathBuf, String> {
+        let manifest = std::fs::read_to_string(self.workdir.join("Cargo.toml"))
+            .map_err(|e| format!("reading Cargo.toml: {e}"))?;
+        let table: toml::Table = manifest
+            .parse()
+            .map_err(|e| format!("parsing Cargo.toml: {e}"))?;
+        let rel = table
+            .get("lib")
+            .and_then(|l| l.get("path"))
+            .and_then(|p| p.as_str())
+            .unwrap_or("src/lib.rs");
+        let rel = Path::new(rel);
+        if rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!("refusing lib path {rel:?} outside the crate"));
+        }
+        Ok(self.workdir.join(rel))
+    }
+
+    /// Creates `target/verifier-harness/<name>`: a standalone binary crate
     /// whose only dependency is the crate under test, by path.
     fn write_harness(&self, name: &str, source: &str) -> Result<PathBuf, String> {
         if !is_ident(name) {
@@ -153,11 +238,11 @@ impl<'a> Runner<'a> {
         let manifest = std::fs::read_to_string(self.workdir.join("Cargo.toml"))
             .map_err(|e| format!("reading Cargo.toml: {e}"))?;
         let krate = package_name(&manifest)?;
-        let dir = self.workdir.join("target/rebut-harness").join(name);
+        let dir = self.workdir.join("target/verifier-harness").join(name);
         let io = |e: std::io::Error| format!("writing harness: {e}");
         std::fs::create_dir_all(dir.join("src")).map_err(io)?;
         let harness_manifest = format!(
-            "[package]\nname = \"rebut-harness-{name}\"\nversion = \"0.0.0\"\n\
+            "[package]\nname = \"verifier-harness-{name}\"\nversion = \"0.0.0\"\n\
              edition = \"2021\"\npublish = false\n\n[dependencies]\n{krate} = {{ path = {} }}\n\n\
              [workspace]\n",
             toml_string(&self.workdir.to_string_lossy()),
@@ -233,7 +318,7 @@ async fn run_command(mut cmd: Command, stdin: Option<Vec<u8>>, budget: Duration)
                 exit_code: None,
                 timed_out: false,
                 stdout: Vec::new(),
-                stderr: format!("rebut-guest: spawn failed: {e}\n").into_bytes(),
+                stderr: format!("verifier-guest: spawn failed: {e}\n").into_bytes(),
             }
         }
     };
@@ -259,7 +344,7 @@ async fn run_command(mut cmd: Command, stdin: Option<Vec<u8>>, budget: Duration)
     let drain = |h: tokio::task::JoinHandle<Vec<u8>>| async move {
         match tokio::time::timeout(PIPE_DRAIN_GRACE, h).await {
             Ok(Ok(buf)) => buf,
-            _ => b"[rebut: output lost]\n".to_vec(),
+            _ => b"[verifier: output lost]\n".to_vec(),
         }
     };
     Captured {
@@ -304,7 +389,7 @@ async fn read_capped<R: AsyncRead + Unpin>(pipe: Option<R>) -> Vec<u8> {
     }
     if dropped > 0 {
         buf.extend_from_slice(
-            format!("\n[rebut: output truncated, {dropped} bytes omitted]\n").as_bytes(),
+            format!("\n[verifier: output truncated, {dropped} bytes omitted]\n").as_bytes(),
         );
     }
     buf
@@ -348,6 +433,96 @@ mod tests {
         assert!(!is_ident(""));
     }
 
+    fn request(steps: Vec<Step>) -> ExecutionRequest {
+        ExecutionRequest {
+            id: uuid::Uuid::nil(),
+            repo_url: "local".into(),
+            commit: verifier_core::CommitSha::new("0".repeat(40)).unwrap(),
+            steps,
+            timeout_secs: 60,
+            vcpus: 1,
+            memory_mib: 256,
+            sealed: false,
+            env: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn kani_step_appends_harness_to_the_crate_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"k\"\n[lib]\npath = \"lib/root.rs\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("lib/root.rs"), "pub fn f() {}\n").unwrap();
+        let req = request(vec![Step::Kani {
+            harness: "verifier_proof_f_0".into(),
+            source: "#[cfg(kani)]\n#[kani::proof]\nfn verifier_proof_f_0() {}".into(),
+        }]);
+        let runner = Runner::new(&req, dir.path());
+        let (cmd, stdin) = runner.prepare(&req.steps[0]).unwrap();
+        assert!(stdin.is_none());
+        let args: Vec<_> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "kani",
+                "--harness",
+                "verifier_proof_f_0",
+                "-Z",
+                "concrete-playback",
+                "--concrete-playback=print"
+            ]
+        );
+        let root = std::fs::read_to_string(dir.path().join("lib/root.rs")).unwrap();
+        assert!(root.starts_with("pub fn f() {}\n"));
+        assert!(root.contains("fn verifier_proof_f_0()"));
+
+        let bad = request(vec![Step::Kani {
+            harness: "../x".into(),
+            source: String::new(),
+        }]);
+        assert!(Runner::new(&bad, dir.path())
+            .prepare(&bad.steps[0])
+            .is_err());
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"k\"\n[lib]\npath = \"../escape.rs\"\n",
+        )
+        .unwrap();
+        assert!(runner.crate_root().is_err());
+    }
+
+    #[test]
+    fn mutants_step_writes_the_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = request(vec![Step::Mutants {
+            diff: "--- a/src/lib.rs\n+++ b/src/lib.rs\n".into(),
+            timeout_secs: 30,
+            jobs: 0,
+        }]);
+        let runner = Runner::new(&req, dir.path());
+        let (cmd, _) = runner.prepare(&req.steps[0]).unwrap();
+        let args: Vec<_> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args[..2], ["mutants", "--in-diff"]);
+        assert!(args.iter().any(|a| a == "--no-shuffle"));
+        assert!(args.windows(2).any(|w| w == ["--timeout", "30"]));
+        assert!(args.windows(2).any(|w| w == ["--jobs", "1"]));
+        assert!(args.iter().any(|a| a == "--cargo-arg=--offline"));
+        let diff = std::fs::read_to_string(dir.path().join(MUTANTS_DIR).join("pr.diff")).unwrap();
+        assert!(diff.starts_with("--- a/src/lib.rs"));
+    }
+
     #[tokio::test]
     async fn output_is_capped_with_marker() {
         let mut cmd = Command::new("sh");
@@ -356,7 +531,7 @@ mod tests {
         assert_eq!(c.exit_code, Some(0));
         assert!(!c.timed_out);
         let marker = format!(
-            "\n[rebut: output truncated, {} bytes omitted]\n",
+            "\n[verifier: output truncated, {} bytes omitted]\n",
             1_100_000 - OUTPUT_CAP
         );
         assert_eq!(c.stdout.len(), OUTPUT_CAP + marker.len());
@@ -390,7 +565,7 @@ mod tests {
         let req = ExecutionRequest {
             id: uuid::Uuid::nil(),
             repo_url: "local".into(),
-            commit: rebut_core::CommitSha::new("0".repeat(40)).unwrap(),
+            commit: verifier_core::CommitSha::new("0".repeat(40)).unwrap(),
             steps: vec![Step::Test { filters: vec![] }],
             timeout_secs: 0,
             vcpus: 1,

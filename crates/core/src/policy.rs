@@ -1,4 +1,4 @@
-//! Maintainer policy, read from `.rebut/policy.toml` on the **base** branch
+//! Maintainer policy, read from `.verifier/policy.toml` on the **base** branch
 //! (never from the PR head: a PR must not be able to relax its own checks).
 
 use serde::{Deserialize, Serialize};

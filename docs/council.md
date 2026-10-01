@@ -20,6 +20,6 @@ each had a veto on decisions in their area. Votes are recorded in the
 > uninstalls, publicly, with a screenshot. Every default must be chosen so that the
 > worst case is a missed bug, never a false accusation.
 
-This is why `EnforcementMode::Mark` is the default in `rebut-core`, why
+This is why `EnforcementMode::Mark` is the default in `verifier-core`, why
 `Inconclusive` never counts against a contributor, why stderr and timings are excluded
 from observations, and why a finding can't exist without a reproduction.

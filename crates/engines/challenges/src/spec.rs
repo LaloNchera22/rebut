@@ -29,16 +29,16 @@
 //!   reference to the single argument, or a tuple of references) and
 //!   `output` (the return value).
 //!
-//! Public specs live in `.rebut/challenges.toml` on the base branch.
+//! Public specs live in `.verifier/challenges.toml` on the base branch.
 //! Sealed specs are supplied privately and are only accepted when their
 //! SHA-256 is one of `policy.sealed_commitments`.
 
 use std::collections::BTreeSet;
 
-use rebut_core::{Digest, Seed, Visibility};
-use rebut_differential::gen::{self, Constraints, Rng};
-use rebut_differential::harness::{self, ArgType, Scalar, Value};
 use serde::Deserialize;
+use verifier_core::{Digest, Seed, Visibility};
+use verifier_differential::gen::{self, Constraints, Rng};
+use verifier_differential::harness::{self, ArgType, Scalar, Value};
 
 pub const MAX_CASES: u32 = 4096;
 const MAX_LEN: usize = 1 << 16;
@@ -166,7 +166,7 @@ impl Challenge {
     }
 }
 
-/// Parses public specs (`.rebut/challenges.toml`).
+/// Parses public specs (`.verifier/challenges.toml`).
 pub fn parse_public(toml_src: &str) -> Result<Vec<Challenge>, SpecError> {
     parse(toml_src, Visibility::Public)
 }

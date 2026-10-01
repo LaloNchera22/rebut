@@ -23,7 +23,7 @@ much his component can claim.
 - A **`Finding`** can only be constructed from a **`Reproduction`**, and a
   `Reproduction` can only be constructed by `Reproduction::confirm` or
   `confirm_divergence` from an **`ExecutionResult`** that actually shows the
-  disagreement. This is enforced by the type system in `rebut-core` (private
+  disagreement. This is enforced by the type system in `verifier-core` (private
   fields, no other constructors), not by convention.
 - Hypotheses that don't reproduce are kept in `EngineReport::unreproduced` for tuning.
   They are never shown to the contributor as findings.

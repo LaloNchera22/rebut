@@ -13,9 +13,9 @@
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use rebut_core::{CommitSha, DrandBeacon, Seed, GENERATOR_VERSION};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
+use verifier_core::{CommitSha, DrandBeacon, Seed, GENERATOR_VERSION};
 
 pub const QUICKNET_CHAIN_HASH: &str =
     "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971";

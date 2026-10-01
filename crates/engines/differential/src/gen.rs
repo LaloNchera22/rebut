@@ -8,7 +8,7 @@
 
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use rebut_core::Seed;
+use verifier_core::Seed;
 
 use crate::harness::{ArgType, IntTy, Scalar, Value};
 
@@ -268,7 +268,7 @@ pub fn differential_cases(args: &[ArgType], seed: &Seed, n: usize) -> Vec<Vec<Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rebut_core::Digest;
+    use verifier_core::Digest;
 
     fn seed(s: &str) -> Seed {
         Seed(Digest::of(s.as_bytes()))

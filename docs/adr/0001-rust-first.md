@@ -26,7 +26,7 @@ The SRE's argument decided it:
 - **Build-time code execution is explicit.** `build.rs` and proc-macros are the known
   places where a build runs code. We run all of it in the VM anyway (see the threat
   model), but the attack surface is well understood.
-- The Rebut itself is written in Rust, so we are our own first user.
+- The verifier itself is written in Rust, so we are our own first user.
 
 ## Decision
 
@@ -40,7 +40,7 @@ it with phase 3, after the engines have proven themselves on Rust.
 
 - We can promise reproducibility ("anyone can re-run this receipt") with a straight
   face for Rust.
-- The `Step` contract in `rebut-core` is Cargo-shaped (`Build { profile }`,
+- The `Step` contract in `verifier-core` is Cargo-shaped (`Build { profile }`,
   `Test { filters }`). Adding Python will mean generalizing it.
 - We give up most of the open-source PR volume at launch.
 

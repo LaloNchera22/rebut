@@ -8,10 +8,10 @@ use std::sync::Mutex;
 
 use anyhow::{bail, Context};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use rebut_core::{CommitSha, RepoId};
 use reqwest::{RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use verifier_core::{CommitSha, RepoId};
 
 use crate::forge::{CheckRun, Forge};
 
@@ -55,7 +55,7 @@ impl GitHubForge {
             key: EncodingKey::from_rsa_pem(private_key_pem).context("invalid GitHub App key")?,
             api: api.into().trim_end_matches('/').to_string(),
             http: reqwest::Client::builder()
-                .user_agent("rebut-rebut")
+                .user_agent("rebut-verifier")
                 .build()?,
             tokens: Mutex::new(HashMap::new()),
         })

@@ -15,10 +15,10 @@
 //! guest -> host    Finished | Error { message }
 //! ```
 
-use rebut_core::{Digest, ExecutionRequest, StepOutcome};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use verifier_core::{Digest, ExecutionRequest, StepOutcome};
 
 /// Largest frame accepted or produced. Step outputs are capped at 1 MiB each
 /// (see [`crate::runner::OUTPUT_CAP`]), which is at most ~8 MiB once JSON

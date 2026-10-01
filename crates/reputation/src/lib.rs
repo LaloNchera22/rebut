@@ -6,17 +6,19 @@
 //!   digest of the signed receipt that attests the verification. Every edge
 //!   points at a receipt anyone can fetch from the transparency log and
 //!   re-verify, so reputation is derived from evidence, not from our say-so.
-//! * [`credential`]: the interface for anonymous credentials (ADR-8), so a
-//!   contributor can prove "I have ≥ N verified merges" to a new project
-//!   without revealing who they are. Interface only — no cryptography is
-//!   implemented here, and none is faked.
+//! * [`credential`]: anonymous credentials (ADR-8). The verifier issues a BBS
+//!   credential over attributes derived from the graph, and the contributor
+//!   proves "I have ≥ N verified merges, none reverted" to a new project
+//!   without revealing who they are, with a per-scope nullifier. The
+//!   cryptography is zkryptium's implementation of the IETF CFRG BBS drafts;
+//!   see the module docs for what is and isn't covered.
 
 pub mod credential;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rebut_core::Digest;
 use serde::{Deserialize, Serialize};
+use verifier_core::Digest;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReputationError {
@@ -25,6 +27,8 @@ pub enum ReputationError {
     ReceiptAlreadyClaimed { receipt: Digest, owner: String },
     #[error("author must not be empty")]
     EmptyAuthor,
+    #[error("receipt {0} is not a recorded merge")]
+    UnknownReceipt(Digest),
 }
 
 /// Bipartite graph author → receipt digests of their verified merges.
@@ -35,6 +39,12 @@ pub enum ReputationError {
 pub struct TrustGraph {
     by_author: BTreeMap<String, BTreeSet<Digest>>,
     owner_of: BTreeMap<Digest, String>,
+    /// Unix time (seconds) each merge happened, when known.
+    #[serde(default)]
+    merged_at: BTreeMap<Digest, u64>,
+    /// Merges later reverted for a verified defect.
+    #[serde(default)]
+    reverted: BTreeSet<Digest>,
 }
 
 impl TrustGraph {
@@ -69,6 +79,44 @@ impl TrustGraph {
             .or_default()
             .insert(receipt_digest);
         Ok(true)
+    }
+
+    /// Like [`Self::record_merge`], also recording when the merge happened
+    /// (Unix seconds). The first recorded time for a receipt is kept.
+    pub fn record_merge_at(
+        &mut self,
+        author: &str,
+        receipt_digest: Digest,
+        merged_at: u64,
+    ) -> Result<bool, ReputationError> {
+        let new = self.record_merge(author, receipt_digest)?;
+        self.merged_at.entry(receipt_digest).or_insert(merged_at);
+        Ok(new)
+    }
+
+    /// Mark a recorded merge as reverted for a verified defect. Returns
+    /// `Ok(false)` if it was already marked.
+    pub fn record_revert(&mut self, receipt_digest: Digest) -> Result<bool, ReputationError> {
+        if !self.owner_of.contains_key(&receipt_digest) {
+            return Err(ReputationError::UnknownReceipt(receipt_digest));
+        }
+        Ok(self.reverted.insert(receipt_digest))
+    }
+
+    /// How many of `author`'s merges were reverted.
+    pub fn reverted_count(&self, author: &str) -> usize {
+        self.by_author.get(author).map_or(0, |s| {
+            s.iter().filter(|d| self.reverted.contains(d)).count()
+        })
+    }
+
+    /// Earliest recorded merge time of `author`, if any merge has one.
+    pub fn first_merge_time(&self, author: &str) -> Option<u64> {
+        self.by_author
+            .get(author)?
+            .iter()
+            .filter_map(|d| self.merged_at.get(d).copied())
+            .min()
     }
 
     /// Receipt digests of `author`'s verified merges, in digest order.
@@ -128,6 +176,36 @@ mod tests {
         );
         assert_eq!(g.merge_count("mallory"), 0);
         assert_eq!(g.record_merge(" ", r), Err(ReputationError::EmptyAuthor));
+    }
+
+    #[test]
+    fn reverts_and_times() {
+        let mut g = TrustGraph::new();
+        let (r1, r2) = (Digest::of(b"receipt-1"), Digest::of(b"receipt-2"));
+        g.record_merge_at("alice", r1, 2_000).unwrap();
+        g.record_merge_at("alice", r2, 1_000).unwrap();
+        assert_eq!(g.first_merge_time("alice"), Some(1_000));
+        assert_eq!(g.first_merge_time("bob"), None);
+        assert_eq!(g.reverted_count("alice"), 0);
+        assert_eq!(g.record_revert(r1), Ok(true));
+        assert_eq!(g.record_revert(r1), Ok(false));
+        assert_eq!(g.reverted_count("alice"), 1);
+        let unknown = Digest::of(b"nope");
+        assert_eq!(
+            g.record_revert(unknown),
+            Err(ReputationError::UnknownReceipt(unknown))
+        );
+    }
+
+    #[test]
+    fn deserializes_graph_without_new_fields() {
+        let mut g = TrustGraph::new();
+        g.record_merge("alice", Digest::of(b"r")).unwrap();
+        let mut v = serde_json::to_value(&g).unwrap();
+        v.as_object_mut().unwrap().remove("merged_at");
+        v.as_object_mut().unwrap().remove("reverted");
+        let back: TrustGraph = serde_json::from_value(v).unwrap();
+        assert_eq!(back, g);
     }
 
     #[test]

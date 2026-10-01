@@ -1,14 +1,13 @@
 [package]
-name = "rebut-receipts"
+name = "verifier-receipts"
 description = "Signed verification receipts: in-toto statements, DSSE envelopes and a transparency log."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-repository.workspace = true
 
 [dependencies]
-rebut-core.workspace = true
+verifier-core.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true

@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use rebut_core::{
+use verifier_core::{
     ChangeKind, CommitSha, ExecutionRequest, Executor, ImpactPlan, IntentManifest, Policy,
     PullRequest, RepoId, StepOutcome,
 };
@@ -91,6 +91,9 @@ impl Executor for Fake {
                         }
                     }
                     (code, out)
+                }
+                Step::Mutants { .. } | Step::Kani { .. } => {
+                    unreachable!("differential never runs mutants or kani")
                 }
             };
             outcomes.push(StepOutcome {

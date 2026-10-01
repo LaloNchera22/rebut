@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use rebut_core::ExecutionRequest;
+use verifier_core::ExecutionRequest;
 
 /// Produces the `.tar.gz` of the source tree to run `req` against.
 ///
@@ -30,8 +30,9 @@ impl DirectorySource {
 impl SourceProvider for DirectorySource {
     async fn fetch(&self, _req: &ExecutionRequest) -> anyhow::Result<Vec<u8>> {
         let root = self.root.clone();
-        let tgz = tokio::task::spawn_blocking(move || rebut_guest::archive::pack_directory(&root))
-            .await??;
+        let tgz =
+            tokio::task::spawn_blocking(move || verifier_guest::archive::pack_directory(&root))
+                .await??;
         Ok(tgz)
     }
 }
