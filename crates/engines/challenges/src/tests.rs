@@ -4,8 +4,8 @@
 use std::sync::{Arc, Mutex};
 
 use rebut_core::{
-    CommitSha, ExecutionRequest, Executor, ImpactPlan, IntentManifest, Policy, PullRequest, RepoId,
-    Seed,
+    channel, CommitSha, ExecutionRequest, Executor, ImpactPlan, IntentManifest, Policy,
+    PullRequest, RepoId, Seed,
 };
 
 use super::*;
@@ -16,6 +16,9 @@ type Sim = dyn Fn(&str, usize, &str) -> Option<String> + Send + Sync;
 struct Fake {
     sim: Box<Sim>,
     build_ok: bool,
+    /// Canonical lines the code under test writes to the channel, as if it
+    /// had stolen the nonce.
+    forge: Option<&'static str>,
     runs: Mutex<usize>,
     requests: Mutex<Vec<ExecutionRequest>>,
 }
@@ -25,6 +28,7 @@ impl Fake {
         Arc::new(Fake {
             sim: Box::new(sim),
             build_ok: true,
+            forge: None,
             runs: Mutex::new(0),
             requests: Mutex::new(vec![]),
         })
@@ -45,13 +49,10 @@ impl Executor for Fake {
             let (code, stdout) = match step {
                 Step::Build { .. } => (if self.build_ok { 0 } else { 101 }, String::new()),
                 Step::Harness { name, input, .. } => {
+                    let (nonce, input) = channel::unseal_input(input).expect("sealed stdin");
                     let mut out = format!("{START_MARKER}\n");
                     let mut code = 0;
-                    for (ci, line) in String::from_utf8(input.clone())
-                        .unwrap()
-                        .lines()
-                        .enumerate()
-                    {
+                    for (ci, line) in std::str::from_utf8(input).unwrap().lines().enumerate() {
                         match (self.sim)(name, run, line) {
                             Some(p) => out += &format!("case {ci} {p}\n"),
                             None => {
@@ -60,7 +61,13 @@ impl Executor for Fake {
                             }
                         }
                     }
-                    (code, out)
+                    // What the code under test prints, then the real report.
+                    let mut raw = b"#harness-start\ncase 0 pass\n".to_vec();
+                    if let Some(forged) = self.forge {
+                        raw.extend(channel::frame(nonce, forged.as_bytes()));
+                    }
+                    raw.extend(channel::frame(nonce, out.as_bytes()));
+                    (code, String::from_utf8(raw).unwrap())
                 }
                 Step::Test { .. } | Step::Mutants { .. } | Step::Kani { .. } => {
                     unreachable!("challenges only build and run harnesses")
@@ -186,11 +193,13 @@ async fn public_failure_becomes_public_finding() {
     let reqs = fake.requests.lock().unwrap();
     assert_eq!(reqs.len(), 3, "two screening runs and one confirmation");
     assert!(reqs.iter().all(|r| r.commit == head() && !r.sealed));
-    // The finding's transcript is the confirmation run's.
+    // The finding's transcript is the confirmation run's; its input is that
+    // run's stdin after the nonce line.
     let Step::Harness { input, .. } = &reqs[2].steps[1] else {
         panic!()
     };
-    assert_eq!(report.findings[0].reproduction().input(), input.as_slice());
+    let (_, input) = channel::unseal_input(input).unwrap();
+    assert_eq!(report.findings[0].reproduction().input(), input);
 }
 
 #[tokio::test]
@@ -333,6 +342,41 @@ async fn harness_that_does_not_start_is_not_a_finding() {
     assert!(report.unreproduced[0].claim.contains("did not compile"));
 }
 
+/// Forged channel lines (as from code that stole the nonce) claiming every
+/// case passed make the engine inconclusive, never a pass; output the code
+/// merely prints (see the fake) is ignored.
+#[tokio::test]
+async fn forged_passes_are_never_a_pass() {
+    for forged in [
+        "case 0 pass\ncase 1 pass\n",
+        "#harness-start\ncase 0 pass\n",
+    ] {
+        let mut fake = Fake::new(buggy);
+        Arc::get_mut(&mut fake).unwrap().forge = Some(forged);
+        let report = ChallengesEngine::with_public_specs(PUBLIC)
+            .run(&ctx(fake, vec![], vec![]))
+            .await
+            .unwrap();
+        assert!(report.findings.is_empty());
+        let reason = report.inconclusive.expect("tampering is never a pass");
+        assert!(
+            reason.contains("tampered") && reason.contains("parse"),
+            "{reason}"
+        );
+    }
+
+    // A sealed challenge's id is not revealed in the reason.
+    let mut fake = Fake::new(buggy);
+    Arc::get_mut(&mut fake).unwrap().forge = Some("case 0 pass\n");
+    let commitment = Digest::of(SEALED.as_bytes());
+    let report = ChallengesEngine::new()
+        .run(&ctx(fake, vec![SEALED.into()], vec![commitment]))
+        .await
+        .unwrap();
+    let reason = report.inconclusive.unwrap();
+    assert!(reason.contains("a sealed challenge") && !reason.contains("secret"));
+}
+
 #[tokio::test]
 async fn public_budget_caps_cases() {
     let fake = Fake::new(|_, _, _| Some("pass".into()));
@@ -347,6 +391,7 @@ async fn public_budget_caps_cases() {
     let Step::Harness { input, .. } = &reqs[0].steps[1] else {
         panic!()
     };
+    let (_, input) = channel::unseal_input(input).unwrap();
     assert_eq!(input.iter().filter(|b| **b == b'\n').count(), 10);
 }
 
@@ -437,14 +482,15 @@ mod mylib {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
+        let nonce = channel::fresh_nonce();
         child
             .stdin
             .take()
             .unwrap()
-            .write_all(&harness::encode_input(&lines))
+            .write_all(&channel::seal_input(&nonce, &harness::encode_input(&lines)))
             .unwrap();
-        let out = HarnessOutput::parse(&child.wait_with_output().unwrap().stdout);
-        assert!(out.started);
+        let out = HarnessOutput::parse_raw(&child.wait_with_output().unwrap().stdout, &nonce);
+        assert!(out.started && !out.tampered);
         assert_eq!(out.cases.len(), 40, "{}", ch.spec.id);
         for (i, case) in cases.iter().enumerate() {
             use rebut_differential::harness::Value;

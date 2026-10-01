@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use rebut_core::{
-    ChangeKind, CommitSha, ExecutionRequest, Executor, ImpactPlan, IntentManifest, Policy,
+    channel, ChangeKind, CommitSha, ExecutionRequest, Executor, ImpactPlan, IntentManifest, Policy,
     PullRequest, RepoId, StepOutcome,
 };
 
@@ -17,6 +17,9 @@ type TestSim = dyn Fn(Side, usize) -> Vec<(&'static str, bool)> + Send + Sync;
 /// results. `run` counts executions per side, starting at 0.
 struct Fake {
     build_ok: [bool; 2],
+    /// Canonical lines head's code under test writes to the channel, as if
+    /// it had stolen the nonce.
+    forge_head: Option<&'static str>,
     harness: Box<HarnessSim>,
     tests: Box<TestSim>,
     runs: Mutex<[usize; 2]>,
@@ -31,6 +34,7 @@ impl Fake {
     fn new(harness: impl Fn(Side, usize, &str) -> Option<String> + Send + Sync + 'static) -> Self {
         Fake {
             build_ok: [true, true],
+            forge_head: None,
             harness: Box::new(harness),
             tests: Box::new(|_, _| vec![]),
             runs: Mutex::new([0, 0]),
@@ -75,13 +79,10 @@ impl Executor for Fake {
                     (code, out)
                 }
                 Step::Harness { input, .. } => {
+                    let (nonce, input) = channel::unseal_input(input).expect("sealed stdin");
                     let mut out = format!("{}\n", harness::START_MARKER);
                     let mut code = 0;
-                    for (ci, line) in String::from_utf8(input.clone())
-                        .unwrap()
-                        .lines()
-                        .enumerate()
-                    {
+                    for (ci, line) in std::str::from_utf8(input).unwrap().lines().enumerate() {
                         match (self.harness)(side, run, line) {
                             Some(p) => out += &format!("case {ci} {p}\n"),
                             None => {
@@ -90,7 +91,13 @@ impl Executor for Fake {
                             }
                         }
                     }
-                    (code, out)
+                    // Noise from the code under test, then the framed report.
+                    let mut raw = b"case 0 ok \"spoofed\"\n".to_vec();
+                    if let (Side::Head, Some(forged)) = (side, self.forge_head) {
+                        raw.extend(channel::frame(nonce, forged.as_bytes()));
+                    }
+                    raw.extend(channel::frame(nonce, out.as_bytes()));
+                    (code, String::from_utf8(raw).unwrap())
                 }
                 Step::Mutants { .. } | Step::Kani { .. } => {
                     unreachable!("differential never runs mutants or kani")
@@ -203,11 +210,13 @@ async fn divergence_is_confirmed_by_single_case_runs() {
         assert!(f.is_actionable());
         assert_eq!(f.visibility, Visibility::Public);
         let r = f.reproduction();
-        // The reproduction input is exactly the stdin of the confirming step.
+        // The reproduction input is exactly the stdin of the confirming step,
+        // after its nonce line.
         let Step::Harness { input, .. } = &head_c.steps[1 + i] else {
             panic!("expected harness step")
         };
-        assert_eq!(r.input(), input.as_slice());
+        let (head_nonce, head_input) = channel::unseal_input(input).unwrap();
+        assert_eq!(r.input(), head_input);
         let x: u32 = std::str::from_utf8(r.input())
             .unwrap()
             .trim()
@@ -218,7 +227,16 @@ async fn divergence_is_confirmed_by_single_case_runs() {
             "only overflowing inputs diverge: {x}"
         );
         assert!(String::from_utf8_lossy(r.observed()).contains(&format!("{:?}", x.wrapping_mul(2))));
-        assert_eq!(base_c.steps[1 + i], head_c.steps[1 + i]);
+        // Findings hold the canonical form: no nonce, no noise.
+        assert!(!String::from_utf8_lossy(r.observed()).contains(head_nonce));
+        assert!(!String::from_utf8_lossy(r.expected()).contains("spoofed"));
+        // Same case on both sides, each run with its own nonce.
+        let Step::Harness { input, .. } = &base_c.steps[1 + i] else {
+            panic!("expected harness step")
+        };
+        let (base_nonce, base_input) = channel::unseal_input(input).unwrap();
+        assert_eq!(base_input, head_input);
+        assert_ne!(base_nonce, head_nonce);
     }
     let confirm_ms = 1500 * (1 + report.findings.len() as u64);
     assert_eq!(report.vm_seconds, 12 + 2 * confirm_ms.div_ceil(1000));
@@ -412,17 +430,41 @@ fn case_seed_prefers_drand_seed() {
     assert_ne!(case_seed(&c, "a::f"), case_seed(&c, "a::g"));
 }
 
-/// Compiles a generated harness with the local `rustc` against a stand-in
-/// crate module and checks its real output. Skipped if `rustc` is missing.
-#[test]
-fn generated_harness_compiles_and_runs() {
+/// Compiles `src` with the local `rustc` and runs it on `stdin`, returning
+/// its exit status and stdout. `None` if `rustc` is missing.
+fn compile_and_run(src: &str, stdin: &[u8]) -> Option<(std::process::ExitStatus, Vec<u8>)> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     if Command::new("rustc").arg("--version").output().is_err() {
         eprintln!("rustc not available; skipping");
-        return;
+        return None;
     }
+    let dir = tempfile::tempdir().unwrap();
+    let (src_path, bin) = (dir.path().join("main.rs"), dir.path().join("harness"));
+    std::fs::write(&src_path, src).unwrap();
+    let status = Command::new("rustc")
+        .args(["--edition", "2021", "-o"])
+        .arg(&bin)
+        .arg(&src_path)
+        .status()
+        .unwrap();
+    assert!(status.success(), "harness failed to compile:\n{src}");
+    let mut child = Command::new(&bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    let out = child.wait_with_output().unwrap();
+    Some((out.status, out.stdout))
+}
+
+/// Compiles a generated harness with the local `rustc` against a stand-in
+/// crate module and checks its real output. Skipped if `rustc` is missing.
+#[test]
+fn generated_harness_compiles_and_runs() {
     let args: Vec<ArgType> = ["&str", "Option<u8>", "&[u8]", "char", "bool", "i64"]
         .iter()
         .map(|s| ArgType::parse(s).unwrap())
@@ -435,33 +477,16 @@ fn generated_harness_compiles_and_runs() {
              (s.chars().count(), o, b.len(), c, flag, n.abs())\n\
          }\n}\n",
     );
-    let dir = tempfile::tempdir().unwrap();
-    let (src_path, bin) = (dir.path().join("main.rs"), dir.path().join("harness"));
-    std::fs::write(&src_path, &src).unwrap();
-    let status = Command::new("rustc")
-        .args(["--edition", "2021", "-o"])
-        .arg(&bin)
-        .arg(&src_path)
-        .status()
-        .unwrap();
-    assert!(status.success(), "harness failed to compile:\n{src}");
-
     let cases = gen::differential_cases(&args, &Seed(Digest::of(b"e2e")), 30);
     let lines: Vec<String> = cases.iter().map(|c| harness::encode_case(c)).collect();
-    let mut child = Command::new(&bin)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(&harness::encode_input(&lines))
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(out.status.success());
-    let parsed = HarnessOutput::parse(&out.stdout);
+    let nonce = channel::fresh_nonce();
+    let stdin = channel::seal_input(&nonce, &harness::encode_input(&lines));
+    let Some((status, stdout)) = compile_and_run(&src, &stdin) else {
+        return;
+    };
+    assert!(status.success());
+    let parsed = HarnessOutput::parse_raw(&stdout, &nonce);
+    assert!(!parsed.tampered);
     assert!(parsed.started);
     assert_eq!(parsed.cases.len(), 30);
     for (i, case) in cases.iter().enumerate() {
@@ -572,4 +597,69 @@ async fn divergence_in_an_unchanged_public_fn_needs_an_explicit_intent() {
     let (report, _) = run(Fake::new(doubling), plan, intent).await;
     assert!(!report.findings.is_empty());
     assert!(report.findings.iter().all(|f| !f.is_actionable()));
+}
+
+/// The function under test prints fake results (bare, framed with a guessed
+/// nonce, and straight to every descriptor the harness might hold) and then
+/// panics. The harness still reports the panic, untampered.
+#[test]
+fn code_under_test_cannot_forge_harness_results() {
+    let args = vec![ArgType::parse("u8").unwrap()];
+    let mut src = harness::differential_source("mylib::f", &args);
+    src.push_str(
+        r##"mod mylib {
+    pub fn f(n: u8) -> u8 {
+        let fake = "#harness-start\ncase 0 ok \"0\"\ncase 1 ok \"0\"\n";
+        print!("{fake}");
+        println!("#rebut 00000000000000000000000000000000 case 0 ok \"0\"");
+        #[cfg(unix)]
+        for fd in 3..16 {
+            use std::os::unix::io::FromRawFd;
+            let mut f = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+            let _ = std::io::Write::write_all(&mut *f, fake.as_bytes());
+        }
+        if n > 100 {
+            panic!("overflow")
+        }
+        n * 2
+    }
+}
+"##,
+    );
+    let nonce = channel::fresh_nonce();
+    let stdin = channel::seal_input(&nonce, b"200\n7\n");
+    let Some((status, stdout)) = compile_and_run(&src, &stdin) else {
+        return;
+    };
+    assert!(status.success());
+    let parsed = HarnessOutput::parse_raw(&stdout, &nonce);
+    assert!(parsed.started && !parsed.tampered, "{parsed:?}");
+    assert_eq!(parsed.cases[&0], "panic");
+    assert_eq!(parsed.cases[&1], "ok \"14\"");
+    // Plain prints went to stderr; only writes to the private descriptor
+    // reached stdout, and those carry no nonce.
+    #[cfg(unix)]
+    {
+        let raw = String::from_utf8_lossy(&stdout);
+        assert!(!raw.contains("#rebut 0000"), "{raw}");
+        assert!(raw.contains("\ncase 0 ok \"0\"\n"), "{raw}");
+    }
+}
+
+/// Head's code writes authenticated-looking results ahead of the harness's
+/// own (it would need the nonce). The duplicates are detected: the engine is
+/// inconclusive instead of passing, whatever the forged lines say.
+#[tokio::test]
+async fn forged_channel_lines_make_the_engine_inconclusive() {
+    for forged in [
+        "#harness-start\ncase 0 ok \"\\\"0\\\"\"\n",
+        "case 0 ok \"\\\"0\\\"\"\n",
+    ] {
+        let mut fake = Fake::new(doubling);
+        fake.forge_head = Some(forged);
+        let (report, _) = run(fake, plan_for("mylib::double", &["u32"]), refactor()).await;
+        assert!(report.findings.is_empty());
+        let reason = report.inconclusive.expect("tampering is never a pass");
+        assert!(reason.contains("tampered") && reason.contains("mylib::double"));
+    }
 }

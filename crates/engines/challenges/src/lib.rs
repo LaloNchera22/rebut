@@ -13,8 +13,12 @@
 //! twice; cases that fail identically in both runs are re-run one per step in
 //! a confirmation request, and a finding is built with
 //! [`Reproduction::confirm`] against that single-case step, whose expected
-//! observation is exactly what a passing single-case run prints
-//! (`#harness-start` then `case 0 pass`, exit 0).
+//! observation is exactly what a passing single-case run reports
+//! (`#harness-start` then `case 0 pass`, exit 0), in the canonical form of
+//! the authenticated result channel ([`rebut_core::channel`]): nonce-free,
+//! so expectations and findings stay reproducible. Output the code under
+//! test prints is not part of it, and forged channel lines make the engine
+//! inconclusive rather than let a failing case pass.
 
 pub mod drand;
 pub mod spec;
@@ -193,6 +197,7 @@ impl ChallengesEngine {
         };
 
         let mut candidates = Vec::new();
+        let mut tampered = Vec::new();
         for (pi, p) in group.iter().enumerate() {
             let outs: Vec<HarnessOutput> = runs
                 .iter()
@@ -202,6 +207,10 @@ impl ChallengesEngine {
                         .unwrap_or_default()
                 })
                 .collect();
+            if outs.iter().any(|o| o.tampered) {
+                tampered.push(p.ch.spec.id.clone());
+                continue;
+            }
             if !outs.iter().all(|o| o.started) {
                 report.unreproduced.push(note(
                     p,
@@ -250,7 +259,7 @@ impl ChallengesEngine {
             }
         }
         if candidates.is_empty() {
-            return Ok(None);
+            return Ok(tamper_reason(&tampered, sealed));
         }
 
         let expected = pass_expectation()?;
@@ -263,9 +272,13 @@ impl ChallengesEngine {
         for (i, c) in candidates.iter().enumerate() {
             let step = 1 + i;
             let p = &group[c.planned];
+            let parsed = outcome(&confirm, step).map(|o| (o, HarnessOutput::parse(&o.stdout)));
+            if parsed.as_ref().is_some_and(|(_, h)| h.tampered) {
+                tampered.push(p.ch.spec.id.clone());
+                continue;
+            }
             let consistent = rebuilt
-                && outcome(&confirm, step).is_some_and(|o| {
-                    let h = HarnessOutput::parse(&o.stdout);
+                && parsed.is_some_and(|(o, h)| {
                     !o.timed_out && h.started && h.cases.get(&0) == c.payload.as_ref()
                 });
             let input = harness::encode_input(std::slice::from_ref(&c.line));
@@ -289,8 +302,23 @@ impl ChallengesEngine {
                 )),
             }
         }
-        Ok(None)
+        Ok(tamper_reason(&tampered, sealed))
     }
+}
+
+/// Why a group is inconclusive when some harness output was forged. Sealed
+/// challenge ids are not named: the reason reaches the contributor.
+fn tamper_reason(ids: &[String], sealed: bool) -> Option<String> {
+    let mut ids = ids.to_vec();
+    ids.dedup();
+    let which = if sealed {
+        "a sealed challenge".to_string()
+    } else {
+        format!("challenge(s) {}", ids.join(", "))
+    };
+    (!ids.is_empty()).then(|| {
+        format!("harness result channel tampered with in {which}; results cannot be trusted")
+    })
 }
 
 #[async_trait::async_trait]

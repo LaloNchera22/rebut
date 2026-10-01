@@ -11,6 +11,7 @@
 //!   way to build what a contributor sees, and it strips every byte of a sealed
 //!   finding except its category.
 
+pub mod channel;
 pub mod digest;
 pub mod engine;
 pub mod exec;

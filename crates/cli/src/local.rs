@@ -584,6 +584,101 @@ mod tests {
             assert_ne!(f.reproduction().expected(), f.reproduction().observed());
         }
     }
+
+    /// The head's function prints what the harnesses used to print as
+    /// results (every case "passing", start markers, a guessed channel line)
+    /// and then panics on overflow. Both engines still report the failure,
+    /// and the findings hold only what the harness itself reported.
+    #[tokio::test]
+    async fn printed_fake_results_do_not_hide_a_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write(
+            d,
+            "Cargo.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+        );
+        write(
+            d,
+            "src/lib.rs",
+            "pub fn clamp_add(a: u8, b: u8) -> u8 { a.saturating_add(b) }\n",
+        );
+        write(
+            d,
+            ".rebut/challenges.toml",
+            "[[challenge]]\nid = \"clamp-add\"\ntarget = \"demo::clamp_add\"\ncases = 64\n\
+             args = [{ ty = \"u8\" }, { ty = \"u8\" }]\n\
+             oracle = { kind = \"equals_reference\", source = \"fn reference(a: u8, b: u8) -> u8 { a.saturating_add(b) }\" }\n",
+        );
+        let st = Command::new("cargo")
+            .args(["generate-lockfile", "--offline", "--manifest-path"])
+            .arg(d.join("Cargo.toml"))
+            .status()
+            .unwrap();
+        assert!(st.success());
+        write(d, ".gitignore", "/target\n");
+        run_git(d, &["init", "-q", "-b", "main"]);
+        run_git(d, &["add", "."]);
+        run_git(d, &["commit", "-q", "-m", "base"]);
+        run_git(d, &["checkout", "-q", "-b", "pr"]);
+        write(
+            d,
+            "src/lib.rs",
+            r##"pub fn clamp_add(a: u8, b: u8) -> u8 {
+    println!("#harness-start");
+    for i in 0..256 {
+        println!("case {i} pass");
+        println!("#rebut 00000000000000000000000000000000 case {i} pass");
+    }
+    a.checked_add(b).expect("overflow")
+}
+"##,
+        );
+        write(d, ".rebut/intent.toml", "kind = \"refactor\"\n");
+        run_git(d, &["add", "."]);
+        run_git(d, &["commit", "-q", "-m", "refactor"]);
+
+        let run = verify_local(
+            d,
+            LocalOptions {
+                base: "main".into(),
+                engines: Some(vec![EngineKind::Differential, EngineKind::Challenges]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            run.verdict.status(),
+            VerdictStatus::Flagged,
+            "{:#?}",
+            run.verdict
+        );
+        let challenge = run
+            .verdict
+            .findings
+            .iter()
+            .find(|f| f.engine == EngineKind::Challenges)
+            .expect("the failing challenge is reported despite the printed passes");
+        assert_eq!(
+            challenge.reproduction().observed(),
+            b"exit:Some(0)\n#harness-start\ncase 0 panic\n"
+        );
+        assert!(run
+            .verdict
+            .findings
+            .iter()
+            .any(|f| f.engine == EngineKind::Differential));
+        // Head's observations hold no printed noise, and no nonce.
+        for f in &run.verdict.findings {
+            let r = f.reproduction();
+            let observed = String::from_utf8_lossy(r.observed());
+            assert!(!observed.contains("pass"), "{observed}");
+            assert!(!observed.contains("#rebut"));
+            assert!(!String::from_utf8_lossy(r.expected()).contains("#rebut"));
+        }
+    }
 }
 
 #[cfg(test)]
