@@ -39,6 +39,9 @@ much his component can claim.
   digest of the recorded transcript, so the contributor can reproduce it.
 - Some true problems that the model "sees" but can't turn into a reproducing input
   go unreported. We accept this: false negatives are cheaper than false accusations.
+- The same holds for model quality: a small local model finds fewer bugs but can't
+  find false ones, which is why the rival agent can default to one
+  ([ADR-9](0009-local-model-rival-agent.md)).
 
 ## Vote
 

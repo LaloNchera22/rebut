@@ -22,6 +22,7 @@ rebut-fabric.workspace = true
 rebut-differential.workspace = true
 rebut-challenges.workspace = true
 rebut-receipts.workspace = true
+rebut-adversary.workspace = true
 rebut-reputation.workspace = true
 rebut-guest = { path = "../guest", version = "0.1.0", default-features = false }
 anyhow.workspace = true

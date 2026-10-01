@@ -32,12 +32,18 @@
 //! worst *miss* bugs; it cannot fabricate one.
 
 pub mod anthropic;
+pub mod openai;
+pub mod prompt;
+pub mod provider;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use anthropic::{parse_hypotheses, AnthropicGenerator, ANTHROPIC_VERSION, DEFAULT_MODEL};
+pub use anthropic::{AnthropicGenerator, ANTHROPIC_VERSION, DEFAULT_MODEL};
+pub use openai::{OpenAiCompatGenerator, DEFAULT_LOCAL_MODEL, OLLAMA_URL};
+pub use prompt::{parse_hypotheses, parse_hypotheses_lenient};
+pub use provider::{AdversaryConfig, Provider};
 use rebut_core::{
     CommitSha, Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest, ExecutionResult,
     Executor, Finding, FnSignature, Hypothesis, Reproduction, Step, StepOutcome, Visibility,
@@ -46,6 +52,13 @@ use rebut_core::{
 /// Anything that proposes hypotheses about a PR.
 #[async_trait::async_trait]
 pub trait HypothesisGenerator: Send + Sync {
+    /// Cheap reachability check (e.g. a local model server that isn't
+    /// running), so callers can warn and skip the engine instead of waiting
+    /// on [`propose`](Self::propose).
+    async fn ready(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     async fn propose(&self, ctx: &EngineContext) -> anyhow::Result<Vec<Hypothesis>>;
 }
 

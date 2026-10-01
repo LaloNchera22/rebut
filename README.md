@@ -100,6 +100,29 @@ from forks get no secrets, so only public checks run there; and with
 check). Never use `pull_request_target` with a checkout of the PR's code. Full
 example: [`examples/github-workflow.yml`](examples/github-workflow.yml).
 
+### Rival agent with a local model
+
+The rival agent is an LLM that reads the change and guesses inputs that might break
+it. It is **off by default**. To turn it on for free, run a model locally:
+
+```sh
+ollama pull qwen2.5-coder:7b
+rebut verify --base main --adversary ollama
+```
+
+`--adversary ollama:<model>` picks another Ollama model. Any OpenAI-compatible server
+(llama.cpp, LM Studio, vLLM) works with
+`--adversary openai-compat --adversary-url http://localhost:8080/v1 --adversary-model <name>`,
+and `--adversary anthropic` uses the hosted API (needs `ANTHROPIC_API_KEY`). The
+same settings can come from `REBUT_ADVERSARY`, `REBUT_ADVERSARY_URL` and
+`REBUT_ADVERSARY_MODEL`. If the model server isn't running, `verify` prints a
+warning and carries on without it.
+
+Every guess is replayed against your real code, and only an execution that actually
+misbehaves becomes a finding ([ADR-6](docs/adr/0006-llm-output-is-not-evidence.md)).
+So a weaker local model only finds fewer bugs; it can't produce a false finding.
+([book](https://lalonchera22.github.io/rebut/rival-agent.html))
+
 ## Crate map
 
 ```
@@ -227,7 +250,7 @@ log. The `rebut-control` and `rebut-reputation` crates are not published.
 | `Step::Mutants`, `Step::Kani` executor steps | Done in core and the guest agent. The VM rootfs must ship `cargo-mutants` and `cargo-kani` (and Kani's dependencies in the warm cargo cache). |
 | Mutation engine | Wired into the control plane with a base..head diff from the checkouts. Not yet run against a real cargo-mutants in a VM. |
 | Formal engine | Wired when `ANTHROPIC_API_KEY` is set (`REBUT_FORMAL_MODEL` overrides the model). Not yet run against a real cargo-kani. |
-| Rival agent | Wired when `ANTHROPIC_API_KEY` is set (`REBUT_ADVERSARY_MODEL`). Opt-in per repository: add `"adversary"` to `engines`. |
+| Rival agent | Wired when `REBUT_ADVERSARY` (e.g. `ollama`, ADR-9) or `ANTHROPIC_API_KEY` is set (`REBUT_ADVERSARY_MODEL`). Opt-in per repository: add `"adversary"` to `engines`. In the CLI: `rebut verify --adversary ollama`. |
 | Transparency log | Rekor client exists; still untested against a live Rekor. |
 | TEE signer | Receipts carry a signed `signer` identity (`operator-key` or `tee`); `TeeSigner`, attestation traits and `verify_receipt_with_policy` exist. **Only the development-only software attestation verifies.** SEV-SNP reports are parsed and policy-checked but their signature and VCEK chain are not verified yet, so SNP receipts are always rejected. The control plane still signs with the operator key. |
 
@@ -284,6 +307,7 @@ See [`policies/`](policies/README.md).
   [0005 TEE later, transparency log now](docs/adr/0005-tee-later.md) ·
   [0006 LLM output is never evidence](docs/adr/0006-llm-output-is-not-evidence.md) ·
   [0007 drand-seeded challenges](docs/adr/0007-drand-seeded-challenges.md) ·
-  [0008 Anonymous credentials before zkVM](docs/adr/0008-anonymous-credentials.md)
+  [0008 Anonymous credentials before zkVM](docs/adr/0008-anonymous-credentials.md) ·
+  [0009 Local model by default for the rival agent](docs/adr/0009-local-model-rival-agent.md)
 
 License: Apache-2.0.

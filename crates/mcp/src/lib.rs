@@ -229,6 +229,7 @@ impl Server {
                         engines: a.engines,
                         all_public: a.all_public,
                         max_functions: a.max_functions,
+                        adversary: None,
                     },
                 )
                 .await?;

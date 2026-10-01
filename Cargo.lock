@@ -1675,6 +1675,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "hex",
+ "rebut-adversary",
  "rebut-challenges",
  "rebut-core",
  "rebut-differential",

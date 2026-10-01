@@ -56,6 +56,8 @@ enum Cmd {
         /// Cap on the functions compared (default: 32 changed, 200 public).
         #[arg(long)]
         max_functions: Option<usize>,
+        #[command(flatten)]
+        adversary: rebut::local::AdversaryArgs,
     },
     /// Recompute the challenge seed for a commit from a drand round (ADR-7).
     Seed(SeedArgs),
@@ -277,10 +279,16 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             fail_on_findings,
             all_public,
             max_functions,
+            adversary,
         } => {
             eprintln!(
                 "note: building and running your code locally, unsandboxed (like `cargo test`)"
             );
+            let mut warnings = vec![];
+            let adversary = adversary.generator(&mut warnings)?.map(|(g, what)| {
+                eprintln!("note: rival agent: {what} (guesses count only if replayed)");
+                g
+            });
             let beacon = if offline {
                 None
             } else {
@@ -294,9 +302,13 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                     engines,
                     all_public,
                     max_functions,
+                    adversary,
                 },
             )
             .await?;
+            for w in warnings.iter().chain(&run.warnings) {
+                eprintln!("warning: {w}");
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&run)?);
             } else {
