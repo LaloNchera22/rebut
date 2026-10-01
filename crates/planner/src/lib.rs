@@ -11,6 +11,13 @@
 //! something it cannot reason about (build scripts, manifests, the lockfile,
 //! proc-macro crates, `macro_rules!` bodies, unparsable files, non-Rust files
 //! under `src/`), it sets [`ImpactPlan::widen_to_full_suite`].
+//!
+//! When the diff changes dependencies but no Rust source (typically a
+//! `cargo update`), no function of the crate changed, yet its behavior may
+//! have. The plan then switches to [`DiffScope::AllPublic`] and lists every
+//! function reachable by a `pub` path from the root crate, so the
+//! differential engine compares them all. [`PlanOptions::all_public`] forces
+//! that scope for any diff.
 
 mod files;
 mod index;
@@ -18,9 +25,16 @@ mod index;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use rebut_core::{FnSignature, ImpactPlan};
+use rebut_core::{DiffScope, FnSignature, ImpactPlan};
 
 pub use files::{changed_files, MAX_FILE_BYTES};
+
+/// Knobs for [`plan_with`] / [`analyze_with`].
+#[derive(Debug, Clone, Default)]
+pub struct PlanOptions {
+    /// Use [`DiffScope::AllPublic`] whatever the diff.
+    pub all_public: bool,
+}
 
 /// Detailed planner output. [`Analysis::into_plan`] (or `From`) gives the
 /// [`ImpactPlan`] engines consume.
@@ -38,6 +52,15 @@ pub struct Analysis {
     pub changed_files: Vec<String>,
     /// Why the plan widens to the full suite; empty when it does not.
     pub widen_reasons: Vec<String>,
+    /// The diff touches `Cargo.toml`/`Cargo.lock` and no Rust source (nor
+    /// any other file under `src/`): a dependency change.
+    pub dependency_only: bool,
+    pub scope: DiffScope,
+    /// With [`DiffScope::AllPublic`]: the root crate's public API (head),
+    /// see [`ImpactPlan::public_functions`].
+    pub public: Vec<FnSignature>,
+    /// With [`DiffScope::AllPublic`]: public functions no harness can call.
+    pub public_skipped: usize,
 }
 
 impl Analysis {
@@ -62,6 +85,9 @@ impl Analysis {
             tests: self.tests,
             changed_files: self.changed_files,
             widen_to_full_suite: widen,
+            scope: self.scope,
+            public_functions: self.public,
+            public_skipped: self.public_skipped,
         }
     }
 }
@@ -74,12 +100,22 @@ impl From<Analysis> for ImpactPlan {
 
 /// Plans the impact of turning `base` into `head`.
 pub fn plan(base: &Path, head: &Path) -> anyhow::Result<ImpactPlan> {
-    Ok(analyze(base, head)?.into_plan())
+    plan_with(base, head, &PlanOptions::default())
+}
+
+/// [`plan`] with options.
+pub fn plan_with(base: &Path, head: &Path, opts: &PlanOptions) -> anyhow::Result<ImpactPlan> {
+    Ok(analyze_with(base, head, opts)?.into_plan())
 }
 
 /// Like [`plan`], keeping the modified/added/removed split and the reasons
 /// for widening.
 pub fn analyze(base: &Path, head: &Path) -> anyhow::Result<Analysis> {
+    analyze_with(base, head, &PlanOptions::default())
+}
+
+/// [`analyze`] with options.
+pub fn analyze_with(base: &Path, head: &Path, opts: &PlanOptions) -> anyhow::Result<Analysis> {
     let base_files = files::walk(base)?;
     let head_files = files::walk(head)?;
     let changed_files = files::diff(&base_files, &head_files);
@@ -163,6 +199,26 @@ pub fn analyze(base: &Path, head: &Path) -> anyhow::Result<Analysis> {
     for v in [&mut modified, &mut added, &mut removed] {
         v.sort_by(|a, b| a.path.cmp(&b.path));
     }
+
+    let dependency_only = is_dependency_only(&changed_files);
+    let scope = if opts.all_public || dependency_only {
+        DiffScope::AllPublic
+    } else {
+        DiffScope::Changed
+    };
+    let (mut public, mut public_skipped) = (Vec::new(), 0);
+    if scope == DiffScope::AllPublic {
+        // Only the root package: that is the crate a harness links.
+        for f in hi.fns.values().filter(|f| f.crate_dir.is_empty()) {
+            match f.public_api {
+                Some(true) => public.push(f.sig.clone()),
+                Some(false) => public_skipped += 1,
+                None => {}
+            }
+        }
+        public.sort_by(|a, b| a.path.cmp(&b.path));
+        public.dedup_by(|a, b| a.path == b.path);
+    }
     Ok(Analysis {
         modified,
         added,
@@ -170,7 +226,24 @@ pub fn analyze(base: &Path, head: &Path) -> anyhow::Result<Analysis> {
         tests: tests.into_iter().collect(),
         changed_files,
         widen_reasons: widen.into_iter().collect(),
+        dependency_only,
+        scope,
+        public,
+        public_skipped,
     })
+}
+
+/// A manifest or lockfile changed, and nothing that could be source: no
+/// `.rs` file anywhere (build scripts included) and no file under `src/`.
+fn is_dependency_only(changed: &[String]) -> bool {
+    let is_manifest = |f: &String| {
+        matches!(
+            f.rsplit('/').next().unwrap_or(f),
+            "Cargo.toml" | "Cargo.lock"
+        )
+    };
+    let is_source = |f: &String| f.ends_with(".rs") || f.starts_with("src/") || f.contains("/src/");
+    changed.iter().any(is_manifest) && !changed.iter().any(is_source)
 }
 
 #[cfg(test)]
@@ -205,6 +278,10 @@ mod tests {
         }
         fn analyze(&self) -> Analysis {
             analyze(self.base.path(), self.head.path()).unwrap()
+        }
+        fn analyze_all_public(&self) -> Analysis {
+            let opts = PlanOptions { all_public: true };
+            analyze_with(self.base.path(), self.head.path(), &opts).unwrap()
         }
     }
 
@@ -432,5 +509,148 @@ pub mod inner {
         let a = fx.analyze();
         assert!(!a.widen_to_full_suite());
         assert_eq!(paths(&a.modified), vec!["my_lib::g"]);
+    }
+
+    const API: &str = r#"
+pub mod math;
+mod private;
+pub(crate) mod internal { pub fn k(x: u8) -> u8 { x } }
+#[cfg(feature = "extra")]
+pub mod gated { pub fn g(x: u8) -> u8 { x } }
+#[path = "elsewhere.rs"]
+pub mod moved;
+
+pub fn free(x: u32) -> u32 { x }
+pub fn with_lifetime<'a>(s: &'a str) -> &'a str { s }
+pub const fn konst(x: u8) -> u8 { x }
+pub fn generic<T: Copy>(x: T) -> T { x }
+pub async fn later(x: u32) -> u32 { x }
+pub unsafe fn raw(p: *const u8) -> u8 { *p }
+fn private_fn(x: u32) -> u32 { x }
+pub(crate) fn crate_fn(x: u32) -> u32 { x }
+#[cfg(unix)]
+pub fn unix_only(x: u32) -> u32 { x }
+
+pub struct Counter(u32);
+impl Counter {
+    pub fn new() -> Self { Counter(0) }
+    pub fn from_raw(v: u32) -> u32 { v }
+    pub fn bump(&mut self) { self.0 += 1 }
+    fn hidden(x: u8) -> u8 { x }
+}
+impl std::fmt::Display for Counter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
+}
+struct Private;
+impl Private { pub fn make(x: u8) -> u8 { x } }
+pub struct Wrap<T>(T);
+impl<T> Wrap<T> { pub fn id(x: u8) -> u8 { x } }
+pub trait Tr { fn d(x: u8) -> u8 { x } }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    pub fn t() {}
+    pub fn helper(x: u8) -> u8 { x }
+}
+"#;
+
+    #[test]
+    fn all_public_selects_only_reachable_pub_paths() {
+        let fx = Fixture::new(&[
+            ("Cargo.toml", MANIFEST),
+            ("src/lib.rs", API),
+            ("src/math.rs", MATH),
+            ("src/private.rs", PRIVATE),
+            ("src/elsewhere.rs", "pub fn e(x: u8) -> u8 { x }\n"),
+            ("tests/it.rs", "pub fn shared(x: u8) -> u8 { x }\n"),
+        ]);
+        // Nothing changed: the default scope compares nothing.
+        let a = fx.analyze();
+        assert_eq!(a.scope, DiffScope::Changed);
+        assert!(a.public.is_empty() && a.public_skipped == 0);
+
+        let a = fx.analyze_all_public();
+        assert_eq!(a.scope, DiffScope::AllPublic);
+        assert!(!a.dependency_only);
+        assert_eq!(
+            paths(&a.public),
+            vec![
+                "my_lib::Counter::from_raw",
+                "my_lib::Counter::new",
+                "my_lib::free",
+                "my_lib::konst",
+                "my_lib::math::inner::twice",
+                "my_lib::math::parse",
+                "my_lib::with_lifetime",
+            ]
+        );
+        // generic, async, unsafe, and a method taking `&mut self`.
+        assert_eq!(a.public_skipped, 4);
+        let plan = a.into_plan();
+        assert_eq!(plan.scope, DiffScope::AllPublic);
+        assert_eq!(plan.public_functions.len(), 7);
+        assert_eq!(plan.public_skipped, 4);
+        assert!(plan.changed_functions.is_empty());
+    }
+
+    #[test]
+    fn all_public_covers_only_the_root_crate() {
+        let fx = Fixture::new(&[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[workspace]\nmembers = [\"dep\"]\n",
+            ),
+            ("src/lib.rs", "pub fn top(x: u8) -> u8 { x }\n"),
+            ("dep/Cargo.toml", MANIFEST),
+            ("dep/src/lib.rs", "pub fn inner(x: u8) -> u8 { x }\n"),
+        ]);
+        assert_eq!(paths(&fx.analyze_all_public().public), vec!["app::top"]);
+    }
+
+    #[test]
+    fn lockfile_only_diff_compares_all_public() {
+        let lock = "version = 3\n";
+        let fx = base_fixture();
+        write(fx.base.path(), "Cargo.lock", lock);
+        fx.head("Cargo.lock", &format!("{lock}# bumped\n"))
+            .head("README.md", "notes");
+        let a = fx.analyze();
+        assert!(a.dependency_only);
+        assert_eq!(a.scope, DiffScope::AllPublic);
+        assert!(a.widen_to_full_suite());
+        assert!(a.modified.is_empty() && a.added.is_empty() && a.removed.is_empty());
+        assert_eq!(
+            paths(&a.public),
+            vec![
+                "my_lib::Counter::new",
+                "my_lib::add",
+                "my_lib::math::inner::twice",
+                "my_lib::math::parse",
+                "my_lib::uses_add",
+            ]
+        );
+        assert_eq!(a.public_skipped, 1); // Counter::bump(&mut self, ..)
+
+        // A dependency section edit in Cargo.toml counts too.
+        let fx = base_fixture();
+        fx.head(
+            "Cargo.toml",
+            &format!("{MANIFEST}\n[dependencies]\nx = \"1\"\n"),
+        );
+        assert_eq!(fx.analyze().scope, DiffScope::AllPublic);
+
+        // Any source change keeps the usual scope: the changed functions.
+        let fx = base_fixture();
+        write(fx.base.path(), "Cargo.lock", lock);
+        fx.head("Cargo.lock", &format!("{lock}# bumped\n"))
+            .head("src/lib.rs", &LIB.replace("{ a + b }", "{ b + a }"));
+        let a = fx.analyze();
+        assert!(!a.dependency_only);
+        assert_eq!(a.scope, DiffScope::Changed);
+        assert!(a.public.is_empty());
+        let fx = base_fixture();
+        fx.head("Cargo.lock", lock).head("src/data.txt", "x");
+        assert_eq!(fx.analyze().scope, DiffScope::Changed);
     }
 }

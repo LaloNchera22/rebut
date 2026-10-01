@@ -31,6 +31,36 @@ pub struct ImpactPlan {
     /// True when the diff touches something the planner can't reason about
     /// (build.rs, Cargo.toml, macros): engines should widen to the full suite.
     pub widen_to_full_suite: bool,
+    /// Which functions the differential engine compares.
+    #[serde(default)]
+    pub scope: DiffScope,
+    /// With [`DiffScope::AllPublic`]: every function of the crate under test
+    /// that is reachable by a `pub` path from its root and has a shape a
+    /// harness could call (no generics, `self`, `async`, `unsafe`...).
+    /// Empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub public_functions: Vec<FnSignature>,
+    /// With [`DiffScope::AllPublic`]: reachable public functions left out of
+    /// `public_functions` because no harness can call them.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub public_skipped: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// Which functions the differential engine compares between base and head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffScope {
+    /// Only functions whose code changed (the default).
+    #[default]
+    Changed,
+    /// Every public, harnessable function of the crate under test, changed
+    /// or not: for changes whose effect is not in the crate's own code, such
+    /// as a dependency update (`cargo update`).
+    AllPublic,
 }
 
 /// Everything an engine needs for one PR.

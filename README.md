@@ -65,8 +65,11 @@ By default rebut marks and exits 0; `--fail-on-findings` exits 1 on findings.
    `.rebut/challenges.toml` (no-panic, properties, round-trips, reference
    implementations) become fresh inputs on every run.
    ([book](https://lalonchera22.github.io/rebut/scenarios/challenges.html))
-4. **Review dependency updates.** `rebut verify --all-public` compares every
-   public function under the old and the new `Cargo.lock`.
+4. **Review dependency updates.** Commit `cargo update` on a branch and run
+   `rebut verify --base main`. When only `Cargo.toml`/`Cargo.lock` changed, rebut
+   compares every public function reachable from the crate root under the old
+   and the new lockfile. Force it with `--all-public`; cap it with
+   `--max-functions` (default 200).
    ([book](https://lalonchera22.github.io/rebut/scenarios/dependencies.html))
 5. **Review someone else's pull request**, only in a sandbox: the GitHub Action
    below, or a throwaway VM.

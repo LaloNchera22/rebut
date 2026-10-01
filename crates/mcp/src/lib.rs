@@ -37,7 +37,9 @@ fn tools() -> Value {
                     "path": {"type": "string", "description": "Path inside the git repository"},
                     "base": {"type": "string", "default": "main"},
                     "offline": {"type": "boolean", "default": false, "description": "Use a local pseudo-beacon instead of drand"},
-                    "engines": {"type": "array", "items": {"enum": ["differential", "challenges"]}}
+                    "engines": {"type": "array", "items": {"enum": ["differential", "challenges"]}},
+                    "all_public": {"type": "boolean", "default": false, "description": "Compare every public function of the crate, not only changed ones (automatic when only Cargo.toml/Cargo.lock changed, e.g. after `cargo update`)"},
+                    "max_functions": {"type": "integer", "minimum": 1, "description": "Cap on the functions compared (default 32 changed, 200 public)"}
                 },
                 "required": ["path"]
             }
@@ -108,6 +110,9 @@ struct VerifyLocalArgs {
     #[serde(default)]
     offline: bool,
     engines: Option<Vec<EngineKind>>,
+    #[serde(default)]
+    all_public: bool,
+    max_functions: Option<usize>,
 }
 
 fn default_base() -> String {
@@ -222,6 +227,8 @@ impl Server {
                         base: a.base,
                         beacon: (!a.offline).then(|| self.beacon.clone()),
                         engines: a.engines,
+                        all_public: a.all_public,
+                        max_functions: a.max_functions,
                     },
                 )
                 .await?;

@@ -55,12 +55,19 @@ impl IntentManifest {
     pub fn allows_behavior_change(&self, path: &str) -> bool {
         match self.kind {
             ChangeKind::Refactor | ChangeKind::Performance => false,
-            ChangeKind::Bugfix => self
-                .changes_behavior_of
-                .iter()
-                .any(|p| p == path || path.starts_with(&format!("{p}::"))),
+            ChangeKind::Bugfix => self.lists(path),
             ChangeKind::Feature | ChangeKind::Unspecified => true,
         }
+    }
+
+    /// Is `path` (or an enclosing module/type) listed in
+    /// `changes_behavior_of`? Whatever the kind, this is the only way to
+    /// explain a behavior change in a function whose own code did not change
+    /// (e.g. after a dependency update).
+    pub fn lists(&self, path: &str) -> bool {
+        self.changes_behavior_of
+            .iter()
+            .any(|p| p == path || path.starts_with(&format!("{p}::")))
     }
 }
 
