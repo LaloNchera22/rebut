@@ -5,6 +5,7 @@
 //! a seed from drand, regenerate public challenges, and verify a receipt.
 
 pub mod audit;
+pub mod hook;
 pub mod local;
 
 pub use audit::{derive_seed, regenerate_challenges, verify_receipt, ReceiptCheck, SeedInfo};

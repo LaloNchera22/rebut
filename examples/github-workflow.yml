@@ -1,0 +1,45 @@
+# Copy to .github/workflows/rebut.yml in your repository.
+#
+# Two things to know before relying on it (details in the book's
+# "GitHub Action" chapter):
+#
+# 1. GitHub does not pass secrets to workflows triggered by pull requests from
+#    forks. Sealed challenges need a secret, so fork PRs only get the public
+#    checks (differential + public challenges from .rebut/challenges.toml).
+#
+# 2. With `on: pull_request` the workflow file comes from the PR itself, so a
+#    PR can edit this file to skip or weaken the rebut step. Review every
+#    change under .github/workflows/ by hand: add a CODEOWNERS entry such as
+#        /.github/workflows/  @your-org/maintainers
+#    and protect your default branch with "Require review from Code Owners"
+#    and the rebut check as a required status check.
+#
+# Do NOT switch to `pull_request_target` and check out the PR's code: that
+# runs untrusted code with your repository's secrets and a write token.
+
+name: rebut
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rebut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # rebut needs the merge base of the PR and its base branch.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: LaloNchera22/rebut@v0
+        with:
+          # Mark mode: findings go to the job summary and a warning, the
+          # check stays green. Set to "true" once you trust it on your repo.
+          fail-on-findings: "false"
+          # base: main          # default: the PR's base branch
+          # version: v0.1.0     # default: latest release
+          # args: --engines differential
