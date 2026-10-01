@@ -41,6 +41,34 @@ manifest *is* read from head, because it is the contributor's claim. But it can 
 narrow what counts as unexpected (a `refactor` promises *no* behavior change). It
 can't disable checks, and findings it explains are still recorded as informational.
 
+## Forged harness results
+
+**Threat.** Generated harnesses (differential, challenges, formal replay, adversary)
+call the PR's code in the same process and report what they saw on stdout. The PR's
+code can print too: `println!("case 0 pass")`, a `#harness-start`, results for case
+indices that have not run yet, or `rebut:invariant:held` followed by
+`process::exit(0)`. If those lines were read as results, a failing case would count
+as a pass. This is the first shortcut an agent iterating against Rebut would find.
+
+**Defense.** Results travel over an authenticated channel (`rebut_core::channel`).
+Every harness run gets a fresh 128-bit nonce from OS randomness as the first stdin
+line. The harness reads it before any PR code runs; it is not in argv or the
+environment. On unix the harness then moves the real stdout to a private descriptor
+and points fd 1 at stderr, so ordinary prints never reach the channel. Only lines of
+the form `#rebut <nonce> <message>` count. The engines strip the nonce before
+comparing or hashing anything, so expectations, findings and receipts stay
+nonce-free and reproducible; challenge inputs and seeds do not depend on it. Engines
+also check the message sequence. If a message is repeated, out of order or unknown,
+someone else wrote to the channel, and the engine reports inconclusive rather than
+pass.
+
+**Residual risk.** This is not isolation. PR code in the same process can still read
+the nonce and the private descriptor from memory, or run before `main` through
+link-time constructors and intercept stdin. If it also stops the process before the
+harness reports, the sequence check may not notice. The defense makes forgery
+deliberate and detectable in the common cases, not impossible. Real isolation needs
+the reporter in a separate process or sandbox from the code under test.
+
 ## Sealed-challenge exfiltration
 
 **Threat.** Sealed challenges run the PR's code on inputs the contributor must not

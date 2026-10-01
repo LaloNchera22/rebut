@@ -30,14 +30,16 @@
 //!    match what screening saw (a third identical run), and the finding's
 //!    [`Reproduction`] is built by [`Reproduction::confirm_divergence`] over
 //!    those single-case steps. So the reproduction's input is exactly the
-//!    stdin that was fed, its expected/observed are the complete outcomes of
-//!    those steps, and its transcript digest binds the two real confirmation
-//!    runs. We never slice a multi-case stdout into synthetic outcomes.
+//!    stdin that was fed (after the result channel's nonce line), its
+//!    expected/observed are the complete (canonical) outcomes of those steps,
+//!    and its transcript digest binds the two real confirmation runs. We never slice a multi-case stdout into synthetic outcomes.
 //!
 //! A build failure on either side makes the engine inconclusive, never a
 //! finding. A harness that does not start on a side (typically: the function
 //! was added, removed or changed signature, so the harness does not compile)
-//! is not compared.
+//! is not compared. A harness whose result channel was tampered with (see
+//! [`rebut_core::channel`]) makes the engine inconclusive: an untrusted
+//! result never counts as "no divergence".
 
 pub mod gen;
 pub mod harness;
@@ -379,9 +381,14 @@ impl Engine for DifferentialEngine {
 
         // Generated-input divergences.
         let mut case_candidates = Vec::new();
+        let mut tampered = Vec::new();
         for (ti, t) in targets.iter().enumerate() {
             let b = harness_outputs(&base, first_harness + ti);
             let h = harness_outputs(&head, first_harness + ti);
+            if b.iter().chain(&h).any(|o| o.tampered) {
+                tampered.push(t.sig.path.clone());
+                continue;
+            }
             if !b.iter().chain(&h).all(|o| o.started) {
                 // Not comparable: the harness does not compile/start on a side.
                 continue;
@@ -442,6 +449,7 @@ impl Engine for DifferentialEngine {
         }
 
         if case_candidates.is_empty() && test_candidates.is_empty() {
+            report.inconclusive = tamper_reason(&tampered);
             return Ok(report);
         }
 
@@ -478,6 +486,13 @@ impl Engine for DifferentialEngine {
             } else {
                 (ctx.intent.lists(path), " although its code did not change")
             };
+            if [&base_c, &head_c]
+                .iter()
+                .any(|r| outcome(r, step).is_some_and(|o| HarnessOutput::parse(&o.stdout).tampered))
+            {
+                tampered.push(path.clone());
+                continue;
+            }
             let confirmed = rebuilt && confirms_case(&base_c, &head_c, step, c);
             let repro = confirmed
                 .then(|| {
@@ -550,8 +565,21 @@ impl Engine for DifferentialEngine {
                 )),
             }
         }
+        report.inconclusive = tamper_reason(&tampered);
         Ok(report)
     }
+}
+
+/// Why the engine is inconclusive when some harness output was forged.
+fn tamper_reason(paths: &[String]) -> Option<String> {
+    let mut paths = paths.to_vec();
+    paths.dedup();
+    (!paths.is_empty()).then(|| {
+        format!(
+            "harness result channel tampered with while testing {}; results cannot be trusted",
+            paths.join(", ")
+        )
+    })
 }
 
 /// The single-case confirmation runs must show exactly what screening saw

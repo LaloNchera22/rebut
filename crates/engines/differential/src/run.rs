@@ -1,6 +1,8 @@
 //! Execution helpers shared by engines that talk to the fabric.
 
-use rebut_core::{CommitSha, EngineContext, ExecutionRequest, ExecutionResult, Step, StepOutcome};
+use rebut_core::{
+    channel, CommitSha, EngineContext, ExecutionRequest, ExecutionResult, Step, StepOutcome,
+};
 
 /// Which commit of the PR a request runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +42,10 @@ pub fn request(
     }
 }
 
-/// Runs `steps` on `side` and adds the time spent to `vm_seconds`.
+/// Runs `steps` on `side` and adds the time spent to `vm_seconds`. Harness
+/// steps go through the authenticated result channel: each gets a fresh
+/// nonce, and its stdout comes back in canonical form (see
+/// [`rebut_core::channel`]).
 pub async fn execute(
     ctx: &EngineContext,
     side: Side,
@@ -48,10 +53,7 @@ pub async fn execute(
     sealed: bool,
     vm_seconds: &mut u64,
 ) -> anyhow::Result<ExecutionResult> {
-    let result = ctx
-        .executor
-        .execute(request(ctx, side, steps, sealed))
-        .await?;
+    let result = channel::execute(ctx.executor.as_ref(), request(ctx, side, steps, sealed)).await?;
     let ms: u64 = result.outcomes.iter().map(|o| o.duration_ms).sum();
     *vm_seconds += ms.div_ceil(1000);
     Ok(result)

@@ -78,10 +78,20 @@ impl Executor for FakeExec {
         let Step::Harness { input, source, .. } = &req.steps[1] else {
             anyhow::bail!("expected harness")
         };
+        let (nonce, input) = channel::unseal_input(input).expect("sealed stdin");
         let diff = source.contains("rebut:ret");
         let (code, rest) = (self.behavior)(req.repo_url == BASE, input, diff, n);
-        let mut stdout = START.to_vec();
-        stdout.extend_from_slice(&rest);
+        let mut report = START.to_vec();
+        report.extend_from_slice(&rest);
+        // Lines starting with `!` are printed by the code under test; the
+        // rest is the harness's report, framed with the nonce.
+        let mut stdout = Vec::new();
+        for line in report.split_inclusive(|&b| b == b'\n') {
+            match line.strip_prefix(b"!") {
+                Some(printed) => stdout.extend_from_slice(printed),
+                None => stdout.extend(channel::frame(nonce, line)),
+            }
+        }
         let outcomes = vec![
             StepOutcome {
                 step_index: 0,
@@ -251,13 +261,56 @@ async fn panic_already_on_base_is_not_this_prs() {
 
 #[tokio::test]
 async fn function_that_prints_is_not_a_panic() {
-    let exec = FakeExec::new(|_, _, _, _| (Some(0), b"hello from the fn\nrebut:done\n".to_vec()));
+    let exec = FakeExec::new(|_, _, _, _| {
+        (
+            Some(0),
+            b"!hello from the fn\n!rebut:start\nrebut:done\n".to_vec(),
+        )
+    });
     let c = ctx(exec.clone());
     let r = Adversary::default()
         .triage(vec![hyp(Some(b"x"), TARGET)], exec.as_ref(), &c)
         .await;
     assert!(r.findings.is_empty());
     assert_eq!(exec.calls().len(), 1);
+}
+
+/// The head panics, but first prints `rebut:done` (ignored: no nonce) and
+/// exits cleanly from a panic hook; or it forges a whole report with the
+/// nonce, as code that stole it would. Neither passes.
+#[tokio::test]
+async fn printed_or_forged_reports_do_not_hide_a_panic() {
+    let exec = FakeExec::new(|is_base, _, _, _| {
+        if is_base {
+            (Some(0), b"rebut:done\n".to_vec())
+        } else {
+            (Some(0), b"!rebut:done\n".to_vec())
+        }
+    });
+    let c = ctx(exec.clone());
+    let r = Adversary::default()
+        .triage(vec![hyp(Some(b"x"), TARGET)], exec.as_ref(), &c)
+        .await;
+    assert_eq!(r.findings.len(), 1, "{r:?}");
+    assert_eq!(
+        r.findings[0].reproduction().observed(),
+        b"exit:Some(0)\nrebut:start\n"
+    );
+
+    let exec = FakeExec::new(|is_base, _, _, _| {
+        if is_base {
+            (Some(0), b"rebut:done\n".to_vec())
+        } else {
+            (Some(101), b"rebut:start\nrebut:done\n".to_vec())
+        }
+    });
+    let c = ctx(exec.clone());
+    let r = Adversary::default()
+        .triage(vec![hyp(Some(b"x"), TARGET)], exec.as_ref(), &c)
+        .await;
+    assert!(r.findings.is_empty());
+    assert!(r.inconclusive.unwrap().contains("tampered"));
+    assert!(r.unreproduced[0].claim.contains("forged"));
 }
 
 #[tokio::test]
@@ -490,19 +543,18 @@ async fn model_output_only_ever_becomes_harness_stdin() {
         assert_eq!(req.repo_url, HEAD);
         assert!(req.env.is_empty());
         assert!(!req.sealed);
-        assert_eq!(
-            req.steps,
-            vec![
-                Step::Build {
-                    profile: "dev".into()
-                },
-                Step::Harness {
-                    name: "adversary_1".into(),
-                    source: expected.clone(),
-                    input: payload.to_vec(),
-                },
-            ]
-        );
+        let [Step::Build { profile }, Step::Harness {
+            name,
+            source,
+            input,
+        }] = req.steps.as_slice()
+        else {
+            panic!("unexpected steps {:?}", req.steps)
+        };
+        assert_eq!((profile.as_str(), name.as_str()), ("dev", "adversary_1"));
+        assert_eq!(source, &expected);
+        // The stdin is the channel's nonce line, then exactly the payload.
+        assert_eq!(channel::unseal_input(input).unwrap().1, payload);
     }
 }
 

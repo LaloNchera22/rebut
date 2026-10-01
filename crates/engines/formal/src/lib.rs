@@ -40,8 +40,9 @@ pub use codegen::{
 };
 pub use kani::{check_shape, parse_kani_output, KaniOutcome};
 use rebut_core::{
-    Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest, ExecutionResult, Finding,
-    FnSignature, Hypothesis, HypothesisSource, IntentManifest, Reproduction, Step, Visibility,
+    channel, Engine, EngineContext, EngineKind, EngineReport, ExecutionRequest, ExecutionResult,
+    Finding, FnSignature, Hypothesis, HypothesisSource, IntentManifest, Reproduction, Step,
+    Visibility,
 };
 pub use runner::{kani_request, FabricKaniRunner};
 
@@ -114,10 +115,30 @@ pub enum ReplayOutcome {
     Finding(Box<Finding>),
     /// The replay did not confirm the counterexample; the string says why.
     Unreproduced(String),
+    /// Something other than the harness wrote to its result channel, so the
+    /// replay proves nothing either way.
+    Tampered,
 }
 
 const START: &[u8] = b"rebut:start\n";
 const EXPECTED: &[u8] = b"exit:Some(0)\nrebut:start\nrebut:returned\nrebut:invariant:held\n";
+
+/// Whether canonical replay output is a sequence the harness can report: a
+/// lone `rebut:assumption-violated`, or a prefix of `rebut:start`,
+/// `rebut:returned`, `rebut:invariant:*`.
+fn well_formed(stdout: &[u8]) -> bool {
+    let lines: Vec<&[u8]> = stdout.split(|&b| b == b'\n').collect();
+    match lines.as_slice() {
+        [b""]
+        | [b"rebut:assumption-violated", b""]
+        | [b"rebut:start", b""]
+        | [b"rebut:start", b"rebut:returned", b""] => true,
+        [b"rebut:start", b"rebut:returned", last, b""] => {
+            matches!(*last, b"rebut:invariant:held" | b"rebut:invariant:violated")
+        }
+        _ => false,
+    }
+}
 
 /// The request that replays `values` against the PR head.
 pub fn replay_request(
@@ -149,7 +170,9 @@ pub fn replay_request(
     }
 }
 
-/// Decide what a replay run shows. Step 0 is the build, step 1 the harness.
+/// Decide what a replay run shows. Step 0 is the build, step 1 the harness,
+/// whose stdout is in the channel's canonical form (as left by
+/// [`channel::execute`]).
 pub fn judge_replay(
     spec: &HarnessSpec,
     intent: &IntentManifest,
@@ -169,6 +192,9 @@ pub fn judge_replay(
     // nothing about the function.
     if run.timed_out {
         return unrepro("replay timed out");
+    }
+    if !well_formed(&run.stdout) {
+        return ReplayOutcome::Tampered;
     }
     if run.stdout.starts_with(b"rebut:assumption-violated\n") {
         return unrepro("counterexample violates the invariant's preconditions");
@@ -236,7 +262,7 @@ pub async fn replay_counterexample(
     }
     let req = replay_request(ctx, spec, &values);
     let input = encode_input(&values);
-    let result = ctx.executor.execute(req).await?;
+    let result = channel::execute(ctx.executor.as_ref(), req).await?;
     let secs = result.outcomes.iter().map(|o| o.duration_ms).sum::<u64>() / 1000;
     Ok((judge_replay(spec, &ctx.intent, &result, input), secs))
 }
@@ -351,6 +377,18 @@ impl Engine for FormalEngine {
                                 hyp.candidate_input = Some(input);
                                 report.unreproduced.push(hyp);
                             }
+                            // Never a pass: the replay's result was forged.
+                            ReplayOutcome::Tampered => {
+                                report.inconclusive = Some(format!(
+                                    "replay harness result channel tampered with while testing \
+                                     `{}`; results cannot be trusted",
+                                    function.path
+                                ));
+                                hyp.claim
+                                    .push_str(" [counterexample: replay output forged]");
+                                hyp.candidate_input = Some(input);
+                                report.unreproduced.push(hyp);
+                            }
                         }
                     }
                 }
@@ -379,7 +417,11 @@ mod tests {
             let Step::Harness { input, .. } = &req.steps[1] else {
                 anyhow::bail!("expected harness step");
             };
-            let (code, stdout) = (self.stdout)(input);
+            let (nonce, input) = channel::unseal_input(input).expect("sealed stdin");
+            let (code, canonical) = (self.stdout)(input);
+            // Prints from the code under test, then the framed report.
+            let mut stdout = b"rebut:invariant:held\n".to_vec();
+            stdout.extend(channel::frame(nonce, &canonical));
             let outcomes = vec![
                 StepOutcome {
                     step_index: 0,
@@ -576,6 +618,49 @@ mod tests {
             .with_kani(Arc::new(CannedKani(kani::FAILED_FIXTURE.to_string())));
         let r = engine.run(&ctx(e)).await.unwrap();
         assert!(r.findings.is_empty());
+    }
+
+    /// Lines the harness never writes (here: a second verdict, as code that
+    /// stole the nonce would add) make the engine inconclusive.
+    #[tokio::test]
+    async fn forged_replay_output_is_inconclusive() {
+        fn forged(_: &[u8]) -> (i32, Vec<u8>) {
+            (
+                0,
+                b"rebut:start\nrebut:invariant:held\nrebut:invariant:violated\n".to_vec(),
+            )
+        }
+        let e = exec(forged);
+        let engine = FormalEngine::new(Arc::new(FixedProposer))
+            .with_kani(Arc::new(CannedKani(kani::FAILED_FIXTURE.to_string())));
+        let r = engine.run(&ctx(e)).await.unwrap();
+        assert!(r.findings.is_empty());
+        assert!(r.inconclusive.unwrap().contains("tampered"));
+    }
+
+    #[test]
+    fn replay_protocol() {
+        for ok in [
+            "",
+            "rebut:assumption-violated\n",
+            "rebut:start\n",
+            "rebut:start\nrebut:returned\n",
+            "rebut:start\nrebut:returned\nrebut:invariant:held\n",
+            "rebut:start\nrebut:returned\nrebut:invariant:violated\n",
+        ] {
+            assert!(well_formed(ok.as_bytes()), "{ok:?}");
+        }
+        for bad in [
+            "rebut:invariant:held\n",
+            "rebut:start\nrebut:start\n",
+            "rebut:start\nrebut:invariant:held\n",
+            "rebut:start\nrebut:returned\nrebut:invariant:held\nrebut:invariant:held\n",
+            "rebut:start\nrebut:assumption-violated\n",
+            "rebut:start\nhello\n",
+            "rebut:start",
+        ] {
+            assert!(!well_formed(bad.as_bytes()), "{bad:?}");
+        }
     }
 
     #[tokio::test]

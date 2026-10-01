@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use rebut_core::{
-    ChangeKind, CommitSha, Digest, Engine, EngineContext, EngineKind, ExecutionRequest,
+    channel, ChangeKind, CommitSha, Digest, Engine, EngineContext, EngineKind, ExecutionRequest,
     ExecutionResult, Executor, FnSignature, IntentManifest, PullRequest, RepoId, Step, StepOutcome,
 };
 use rebut_formal::{
@@ -87,14 +87,17 @@ impl Executor for FakeFabric {
                 KaniStep::TimedOut => outcome(0, None, true, b"Checking harness", 600_000),
             }],
             [Step::Build { .. }, Step::Harness { input, .. }] => {
+                let (nonce, input) = channel::unseal_input(input).expect("sealed stdin");
                 let v: Vec<i32> = input
                     .chunks(8)
                     .map(|c| i32::from_le_bytes(c[4..8].try_into().unwrap()))
                     .collect();
                 let (code, out) = (self.replay)(v[0], v[1], v[2]);
+                // The replay reports over the authenticated channel.
+                let out = channel::frame(nonce, out.as_bytes());
                 vec![
                     outcome(0, Some(0), false, b"", 20_000),
-                    outcome(1, Some(code), false, out.as_bytes(), 100),
+                    outcome(1, Some(code), false, &out, 100),
                 ]
             }
             other => anyhow::bail!("unexpected steps {other:?}"),
