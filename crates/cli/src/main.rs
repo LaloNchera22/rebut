@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use rebut::audit::parse_public_key;
+use rebut::hook;
 use rebut::local::LocalRun;
 use rebut::{derive_seed, regenerate_challenges, verify_local, verify_receipt, LocalOptions};
 use rebut_challenges::drand::QUICKNET_CHAIN_HASH;
@@ -60,6 +61,33 @@ enum Cmd {
     Receipt {
         #[command(subcommand)]
         command: ReceiptCmd,
+    },
+    /// Git pre-push hook that runs `rebut verify --fail-on-findings`.
+    Hook {
+        #[command(subcommand)]
+        command: HookCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCmd {
+    /// Write the repository's pre-push hook (`.git/hooks/pre-push`).
+    Install {
+        /// Branch the hook compares against.
+        #[arg(long, default_value = "main")]
+        base: String,
+        /// Replace an existing pre-push hook that rebut did not write.
+        #[arg(long)]
+        force: bool,
+        /// Repository path.
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+    },
+    /// Remove the pre-push hook, only if rebut wrote it.
+    Uninstall {
+        /// Repository path.
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
     },
 }
 
@@ -289,6 +317,23 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             let entry: Option<LogEntry> = log_entry.as_ref().map(read_json).transpose()?;
             let check = verify_receipt(&env, &parse_public_key(&key)?, entry.as_ref())?;
             println!("{}", serde_json::to_string_pretty(&check)?);
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Hook { command } => {
+            match command {
+                HookCmd::Install { base, force, repo } => {
+                    let path = hook::install(&hook::hooks_dir(&repo)?, &base, force)?;
+                    println!("installed {}", path.display());
+                }
+                HookCmd::Uninstall { repo } => {
+                    let dir = hook::hooks_dir(&repo)?;
+                    if hook::uninstall(&dir)? {
+                        println!("removed {}", dir.join("pre-push").display());
+                    } else {
+                        println!("no rebut pre-push hook installed");
+                    }
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
     }

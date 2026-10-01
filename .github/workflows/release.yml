@@ -1,0 +1,165 @@
+name: Release
+
+# Push a tag `vX.Y.Z` (matching the workspace version) to build the binaries,
+# create the GitHub Release, move the major tag (`v0`) that `uses:
+# LaloNchera22/rebut@v0` resolves to, publish the crates and update the
+# Homebrew tap.
+
+on:
+  push:
+    # Release tags only; the moving major tag (v0) does not trigger this.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Static musl binaries run on any Linux distribution.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          # Apple Silicon runners build both macOS targets.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # No Windows build: the execution fabric uses Unix process APIs.
+          # Windows users can run the Linux binary under WSL.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        shell: bash
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+        run: cargo build --release --locked --target ${{ matrix.target }} -p rebut -p rebut-mcp
+      - name: Package
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          name="rebut-$TARGET"
+          mkdir -p "dist/$name"
+          cp "target/$TARGET/release/rebut" "target/$TARGET/release/rebut-mcp" README.md "dist/$name/"
+          cd dist
+          tar -czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          cat "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rebut-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+      - uses: actions/checkout@v4
+        if: ${{ !contains(github.ref_name, '-') }}
+      - name: Move the major tag
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          major="${TAG%%.*}"
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"
+
+  crates:
+    name: crates.io
+    # Only after every binary built, so a broken tag publishes nothing.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::warning::CARGO_REGISTRY_TOKEN is not set; skipping crates.io"
+            exit 0
+          fi
+          # Publishes in dependency order and skips `publish = false` crates
+          # (rebut-control, rebut-reputation). Needs cargo >= 1.90.
+          cargo publish --workspace --locked
+
+  homebrew:
+    name: Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Render formula and push to LaloNchera22/homebrew-tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew tap"
+            exit 0
+          fi
+          sha() { cut -d' ' -f1 "dist/rebut-$1.tar.gz.sha256"; }
+          sed -e "s/@VERSION@/${TAG#v}/g" \
+              -e "s/@SHA256_AARCH64_APPLE_DARWIN@/$(sha aarch64-apple-darwin)/" \
+              -e "s/@SHA256_X86_64_APPLE_DARWIN@/$(sha x86_64-apple-darwin)/" \
+              -e "s/@SHA256_AARCH64_LINUX_MUSL@/$(sha aarch64-unknown-linux-musl)/" \
+              -e "s/@SHA256_X86_64_LINUX_MUSL@/$(sha x86_64-unknown-linux-musl)/" \
+              packaging/homebrew/rebut.rb > rebut.rb
+          if grep -q '@[A-Z0-9_]*@' rebut.rb; then
+            echo "::error::unrendered placeholder in rebut.rb"; exit 1
+          fi
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/LaloNchera22/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp rebut.rb tap/Formula/rebut.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/rebut.rb
+          if git diff --cached --quiet; then
+            echo "formula unchanged"; exit 0
+          fi
+          git commit -m "rebut $TAG"
+          git push origin HEAD

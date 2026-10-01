@@ -1,26 +1,155 @@
 # rebut
 
-**Rebut** checks pull requests by running them. It builds and executes the PR
-(head) and its merge base (base) in throwaway Firecracker microVMs, compares their
-behavior on the same inputs, runs challenge inputs seeded from public randomness,
-and publishes a signed [in-toto](https://in-toto.io) receipt of what it did in an
-append-only transparency log. It supports Rust repositories first.
+**Rebut** checks that a Rust change does what it claims, by running it. It
+builds your branch (head) and the commit it started from (base), runs both on
+the same generated inputs, plus challenge inputs seeded from public
+randomness, and reports every function whose behavior changed when the change
+said it wouldn't. Each finding is a concrete input with the base's output and
+the head's output, never an opinion: a language model may *propose* inputs, but
+only a recorded execution that reproduces counts. It is a free, open-source
+tool that runs on your machine or your CI runner, with no server, no database
+and no account.
 
-It assumes **every contributor is an attacker**. PR code, including `build.rs` and
-proc-macros, never runs outside a VM. The maintainer's policy is read from the base
-branch, so a PR can't relax its own checks. Nothing an LLM says counts as evidence:
-a finding exists only if a concrete, recorded execution reproduces it.
+**Documentation: [the rebut book](https://lalonchera22.github.io/rebut/).**
 
-> Phase 1 **marks, it doesn't block.** The check run concludes `neutral` and
-> annotates the PR. Blocking is opt-in per repository (`mode = "block"`), after a
-> maintainer has watched it run for weeks without false positives. One unfair
-> rejection on a well-known project and the maintainer uninstalls, publicly.
+## Install
 
-## The four planes
+```sh
+cargo install rebut --locked              # CLI
+cargo install rebut-mcp --locked          # MCP server for coding agents (optional)
+brew install LaloNchera22/tap/rebut       # both, on macOS or Linux
+```
+
+Prebuilt static binaries for Linux (x86_64, arm64) and macOS are on the
+[releases page](https://github.com/LaloNchera22/rebut/releases). rebut needs
+`git` and a Rust toolchain, because it builds your code with your toolchain.
+
+## 30-second quickstart
+
+A branch replaces `a.saturating_add(b)` with `a.wrapping_add(b)` and calls it a
+refactor. The tests (`clamp_add(1, 2) == 3`) still pass.
+
+```sh
+mkdir -p .rebut && echo 'kind = "refactor"' > .rebut/intent.toml   # what it claims
+rebut verify --base main
+```
+
+```text
+plan: 1 changed fn(s), 1 test(s)
+
+[FINDING] differential / behavior-divergence: `demo::clamp_add` behaves differently on head than on base for a generated input
+  input:    255 255
+  expected: exit:Some(0) | #harness-start | case 0 ok "255"
+  observed: exit:Some(0) | #harness-start | case 0 ok "254"
+
+FLAGGED (mark mode: not blocking)
+```
+
+By default rebut marks and exits 0; `--fail-on-findings` exits 1 on findings.
+
+> `rebut verify` builds and runs code on your machine **without a sandbox**,
+> exactly like `cargo test`. Use it on code you would run anyway. For code you
+> don't trust, use the GitHub Action, where the disposable runner is the
+> sandbox.
+
+## Five ways to use it
+
+1. **Check your own change before you push.** `rebut hook install` adds a
+   pre-push hook running `rebut verify --fail-on-findings`.
+   ([book](https://lalonchera22.github.io/rebut/scenarios/pre-push.html))
+2. **Guard your own AI agent.** `claude mcp add rebut -- rebut-mcp` gives the
+   agent a check it can't satisfy by editing its own tests: policy and
+   challenges come from the base branch, and findings are executions.
+   ([book](https://lalonchera22.github.io/rebut/scenarios/agent.html))
+3. **Amplify your tests with challenges.** A few lines in
+   `.rebut/challenges.toml` (no-panic, properties, round-trips, reference
+   implementations) become fresh inputs on every run.
+   ([book](https://lalonchera22.github.io/rebut/scenarios/challenges.html))
+4. **Review dependency updates.** `rebut verify --all-public` compares every
+   public function under the old and the new `Cargo.lock`.
+   ([book](https://lalonchera22.github.io/rebut/scenarios/dependencies.html))
+5. **Review someone else's pull request**, only in a sandbox: the GitHub Action
+   below, or a throwaway VM.
+   ([book](https://lalonchera22.github.io/rebut/scenarios/review-prs.html))
+
+### GitHub Action
+
+```yaml
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  rebut:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: LaloNchera22/rebut@v0   # mark mode; fail-on-findings: "true" to block
+```
+
+Two caveats, explained in the
+[book](https://lalonchera22.github.io/rebut/github-action.html): pull requests
+from forks get no secrets, so only public checks run there; and with
+`pull_request` a PR can edit the workflow to skip rebut, so review changes to
+`.github/workflows/` by hand (CODEOWNERS plus branch protection requiring the
+check). Never use `pull_request_target` with a checkout of the PR's code. Full
+example: [`examples/github-workflow.yml`](examples/github-workflow.yml).
+
+## Crate map
+
+```
+crates/
+├── cli                  `rebut` command line (published as `rebut`)
+├── mcp                  `rebut-mcp`, MCP server for agents
+├── core                 shared types: Engine, Executor, Step, Hypothesis/Finding/Reproduction, Policy, Seed, Verdict
+├── planner              diff → ImpactPlan (changed functions, tests)
+├── engines/
+│   ├── differential     base vs head on the same inputs
+│   ├── challenges       drand-seeded public challenges + sealed challenges
+│   ├── mutation         cargo-mutants in the diff → hypotheses          (phase 2)
+│   └── formal           Kani harnesses; counterexamples replayed         (phase 2)
+├── adversary            rival agent: untrusted hypotheses → replay → findings (phase 2)
+├── fabric               executors: local process; Firecracker microVMs (hosted mode)
+├── guest                agent inside the VM: build, test, harness, record
+├── receipts             in-toto receipts, signing, transparency log (hosted mode)
+├── control              hosted mode: job queue (Postgres), orchestration, GitHub App (not published)
+└── reputation           hosted mode: trust graph, anonymous credentials, phase 3 (not published)
+policies/                example policy.toml and intent manifests
+docs/book/               the user guide (mdBook)
+docs/                    ADRs, threat model, council notes
+```
+
+Development:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+mdbook build docs/book
+```
+
+## Hosted mode (experimental)
+
+None of the above needs it. Hosted mode is a service design for checking pull
+requests from contributors nobody trusts, at scale, with evidence a third party
+can audit. It assumes **every contributor is an attacker**: PR code, including
+`build.rs` and proc-macros, never runs outside a Firecracker microVM; the
+maintainer's policy is read from the base branch; and every verdict gets a
+signed [in-toto](https://in-toto.io) receipt in an append-only transparency
+log. The `rebut-control` and `rebut-reputation` crates are not published.
+
+> Hosted mode **marks, it doesn't block** by default. The check run concludes
+> `neutral` and annotates the PR. Blocking is opt-in per repository
+> (`mode = "block"`), after a maintainer has watched it run for weeks without
+> false positives.
+
+### The four planes
 
 ```
                  ┌──────────────────────────── integration ────────────────────────────┐
-  GitHub  ──────▶│  GitHub App webhooks · check runs · CLI (rebut) · MCP server │
+  GitHub  ──────▶│  GitHub App webhooks · check runs · CLI (rebut) · MCP server        │
                  └──────────────────────────────┬──────────────────────────────────────┘
                                                 │ PR event (base sha, head sha, body)
                  ┌──────────────────────────────▼──────────── control ──────────────────┐
@@ -43,7 +172,7 @@ a finding exists only if a concrete, recorded execution reproduces it.
                  └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## How a PR flows
+### How a PR flows
 
 1. **Event.** The GitHub App receives `pull_request` and enqueues a job in Postgres.
 2. **Policy and intent.** The control plane reads `.rebut/policy.toml` from the
@@ -73,30 +202,7 @@ a finding exists only if a concrete, recorded execution reproduces it.
    digest and seed is signed and appended to the transparency log. The check run
    links to it.
 
-## Crate map
-
-```
-crates/
-├── core                 shared types: Engine, Executor, Step, Hypothesis/Finding/Reproduction, Policy, Seed, Verdict
-├── control              job queue (Postgres), orchestration, GitHub App
-├── planner              diff → ImpactPlan (changed functions, tests)
-├── fabric               Executor over Firecracker microVMs (jailer, snapshots)
-├── guest                agent inside the VM: build, test, harness, record
-├── engines/
-│   ├── differential     base vs head on the same inputs
-│   ├── challenges       drand-seeded public challenges + sealed challenges
-│   ├── mutation         cargo-mutants in the diff → hypotheses          (phase 2)
-│   └── formal           Kani harnesses; counterexamples replayed         (phase 2)
-├── adversary            rival agent: untrusted hypotheses → replay → findings (phase 2)
-├── receipts             in-toto receipts, signing, transparency log
-├── reputation           trust graph of verified merges; credential interface (phase 3)
-├── cli                  `rebut` command line
-└── mcp                  MCP server for agents
-policies/                example policy.toml and intent manifests
-docs/                    ADRs, threat model, council notes
-```
-
-## Phases
+### Phases
 
 | Phase | Scope |
 |---|---|
@@ -108,40 +214,7 @@ The phase-2 and phase-3 crates already exist and are tested. They are kept small
 honest about what they can't do yet. For example, the mutation and formal engines
 wait for dedicated executor steps and never report an unverified claim as a finding.
 
-## Quickstart
-
-```sh
-# Run the public checks on your branch against main. This builds and runs YOUR
-# code locally without a sandbox, like `cargo test`; the hosted service runs the
-# same engines in Firecracker. Mark mode: exits 0 unless --fail-on-findings.
-cargo run -p rebut -- verify --base main
-cargo run -p rebut -- verify --base main --offline --json
-
-# Recompute the challenge seed for a commit and drand round.
-cargo run -p rebut -- seed --help
-
-# Regenerate the public challenges a receipt claims were run.
-cargo run -p rebut -- challenges regenerate --help
-
-# Verify a receipt's signature and transparency-log inclusion.
-cargo run -p rebut -- receipt verify --help
-```
-
-Example output for a PR that declares `kind = "refactor"`, keeps its tests green,
-and swaps `saturating_add` for `wrapping_add`:
-
-```text
-plan: 1 changed fn(s), 1 test(s)
-
-[FINDING] differential / behavior-divergence: `demo::clamp_add` behaves differently on head than on base for a generated input
-  input:    255 255
-  expected: exit:Some(0) | #harness-start | case 0 ok "255"
-  observed: exit:Some(0) | #harness-start | case 0 ok "254"
-
-FLAGGED (mark mode: not blocking)
-```
-
-### Control plane (GitHub App)
+### Running the control plane
 
 ```sh
 DATABASE_URL=postgres://... \
@@ -157,29 +230,20 @@ runs PR code unsandboxed and is for development only. Other settings
 (`SEALED_SPECS_DIR`, `REKOR_URL`, `MAINTAINER_TOKEN`, `FC_*`) are listed by
 `cargo run -p rebut-control -- --help`.
 
-### MCP server for agents
+Auditing a hosted verdict needs only the CLI:
 
 ```sh
-cargo build -p rebut-mcp --release
-claude mcp add rebut -- ./target/release/rebut-mcp
+rebut seed --help                    # recompute the challenge seed from drand
+rebut challenges regenerate --help   # regenerate the public challenges a receipt claims
+rebut receipt verify --help          # check a receipt's signature and log inclusion
 ```
-
-Tools: `verify_local`, `derive_seed`, `regenerate_challenges`, `verify_receipt`,
-`get_report`.
 
 Configure a repository by committing `.rebut/policy.toml` on its default branch.
 See [`policies/`](policies/README.md).
 
-Development:
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
-
 ## Documentation
 
+- [The rebut book](https://lalonchera22.github.io/rebut/) (source in [`docs/book`](docs/book/src/SUMMARY.md)).
 - [Threat model](docs/threat-model.md): who the attacker is, what we defend against, and what is still open.
 - [Council](docs/council.md): the five roles that designed this, and the Skeptic's warning.
 - Architecture decision records:
