@@ -22,7 +22,7 @@ pub mod seed;
 pub mod verdict;
 
 pub use digest::Digest;
-pub use engine::{Engine, EngineContext, EngineReport, FnSignature, ImpactPlan};
+pub use engine::{DiffScope, Engine, EngineContext, EngineReport, FnSignature, ImpactPlan};
 pub use exec::{ExecutionRequest, ExecutionResult, Executor, Step, StepOutcome};
 pub use finding::{Finding, Hypothesis, HypothesisSource, Reproduction, Visibility};
 pub use intent::{ChangeKind, IntentManifest};

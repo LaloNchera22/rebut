@@ -482,3 +482,91 @@ fn generated_harness_compiles_and_runs() {
         }
     }
 }
+
+fn pub_sig(path: &str, args: &[&str]) -> FnSignature {
+    FnSignature {
+        path: path.into(),
+        args: args.iter().map(|s| s.to_string()).collect(),
+        ret: "u32".into(),
+        is_pub: true,
+    }
+}
+
+#[test]
+fn all_public_selects_unchanged_functions_up_to_a_cap() {
+    let plan = ImpactPlan {
+        changed_functions: vec![pub_sig("mylib::changed", &["u32"])],
+        scope: DiffScope::AllPublic,
+        public_functions: vec![
+            pub_sig("mylib::a", &["u32"]),
+            pub_sig("mylib::b", &["Vec<String>"]),
+            pub_sig("mylib::c", &["&str", "Option<u8>"]),
+            pub_sig("mylib::changed", &["u32"]),
+        ],
+        public_skipped: 2,
+        ..Default::default()
+    };
+    let c = ctx(Arc::new(Fake::new(doubling)), plan.clone(), refactor());
+    let sel = DifferentialEngine::new().select(&c);
+    let picked: Vec<(&str, bool)> = sel
+        .targets
+        .iter()
+        .map(|t| (t.sig.path.as_str(), t.changed))
+        .collect();
+    assert_eq!(
+        picked,
+        vec![
+            ("mylib::changed", true),
+            ("mylib::a", false),
+            ("mylib::c", false)
+        ]
+    );
+    // Two from the planner, plus `b`'s unsupported argument type.
+    assert_eq!((sel.skipped, sel.truncated), (3, 0));
+
+    let capped = DifferentialEngine::with_config(DifferentialConfig {
+        max_public_functions: 2,
+        ..Default::default()
+    })
+    .select(&c);
+    assert_eq!(capped.targets.len(), 2);
+    assert_eq!(capped.truncated, 1);
+
+    // The default scope ignores the public list.
+    let plan = ImpactPlan {
+        scope: DiffScope::Changed,
+        ..plan
+    };
+    let c = ctx(Arc::new(Fake::new(doubling)), plan, refactor());
+    let sel = DifferentialEngine::new().select(&c);
+    assert_eq!(sel.targets.len(), 1);
+    assert_eq!((sel.skipped, sel.truncated), (0, 0));
+}
+
+#[tokio::test]
+async fn divergence_in_an_unchanged_public_fn_needs_an_explicit_intent() {
+    let plan = ImpactPlan {
+        scope: DiffScope::AllPublic,
+        public_functions: vec![pub_sig("mylib::double", &["u32"])],
+        widen_to_full_suite: true,
+        ..Default::default()
+    };
+    // An unspecified intent explains changes in changed functions, but this
+    // one's code did not change: the dependency did.
+    let (report, _) = run(Fake::new(doubling), plan.clone(), IntentManifest::default()).await;
+    assert!(!report.findings.is_empty());
+    for f in &report.findings {
+        assert_eq!(f.category, CATEGORY_DIVERGENCE);
+        assert!(f.is_actionable());
+        assert!(f.title.contains("did not change"), "{}", f.title);
+    }
+
+    let intent = IntentManifest {
+        kind: ChangeKind::Feature,
+        changes_behavior_of: vec!["mylib".into()],
+        summary: String::new(),
+    };
+    let (report, _) = run(Fake::new(doubling), plan, intent).await;
+    assert!(!report.findings.is_empty());
+    assert!(report.findings.iter().all(|f| !f.is_actionable()));
+}

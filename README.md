@@ -141,6 +141,12 @@ plan: 1 changed fn(s), 1 test(s)
 FLAGGED (mark mode: not blocking)
 ```
 
+Dependency updates: commit `cargo update` on a branch and run `rebut verify --base main`.
+When only `Cargo.toml`/`Cargo.lock` changed, no function of yours changed, so rebut
+compares every public function reachable from the crate root instead
+(`plan: dependency change, comparing 37 public fn(s) (5 skipped: unsupported signatures)`).
+Force this for any diff with `--all-public`; cap it with `--max-functions` (default 200).
+
 ### Control plane (GitHub App)
 
 ```sh

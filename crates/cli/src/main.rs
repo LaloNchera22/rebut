@@ -48,6 +48,13 @@ enum Cmd {
         /// Exit non-zero on actionable findings (default: mark, don't block).
         #[arg(long)]
         fail_on_findings: bool,
+        /// Compare every public function, not only the changed ones
+        /// (automatic when only Cargo.toml/Cargo.lock changed).
+        #[arg(long)]
+        all_public: bool,
+        /// Cap on the functions compared (default: 32 changed, 200 public).
+        #[arg(long)]
+        max_functions: Option<usize>,
     },
     /// Recompute the challenge seed for a commit from a drand round (ADR-7).
     Seed(SeedArgs),
@@ -153,16 +160,7 @@ fn print_human(run: &LocalRun) {
             format!("drand round {}", run.beacon.round)
         }
     );
-    println!(
-        "plan: {} changed fn(s), {} test(s){}",
-        run.plan.changed_functions.len(),
-        run.plan.tests.len(),
-        if run.plan.widen_to_full_suite {
-            ", full suite"
-        } else {
-            ""
-        }
-    );
+    println!("{}", run.plan_line());
     for f in &v.findings {
         let tag = if f.is_actionable() { "FINDING" } else { "info" };
         println!("\n[{tag}] {} / {}: {}", f.engine, f.category, f.title);
@@ -217,6 +215,8 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             engines,
             json,
             fail_on_findings,
+            all_public,
+            max_functions,
         } => {
             eprintln!(
                 "note: building and running your code locally, unsandboxed (like `cargo test`)"
@@ -232,6 +232,8 @@ async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                     base,
                     beacon,
                     engines,
+                    all_public,
+                    max_functions,
                 },
             )
             .await?;
