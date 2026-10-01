@@ -18,7 +18,7 @@ mod index;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use verifier_core::{FnSignature, ImpactPlan};
+use rebut_core::{FnSignature, ImpactPlan};
 
 pub use files::{changed_files, MAX_FILE_BYTES};
 

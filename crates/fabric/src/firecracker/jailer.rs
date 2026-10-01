@@ -177,13 +177,10 @@ mod tests {
     #[test]
     fn snapshot_restore_has_no_config_file_and_custom_seccomp() {
         let mut c = cfg();
-        c.seccomp_filter = Some("/etc/verifier/fc.bpf".into());
+        c.seccomp_filter = Some("/etc/rebut/fc.bpf".into());
         let a = strs(&jailer_args(&c, "vm-1", 1, 256, false).unwrap());
         assert!(!a.contains(&"--config-file".to_string()));
-        assert_eq!(
-            value_after(&a, "--seccomp-filter"),
-            ["/etc/verifier/fc.bpf"]
-        );
+        assert_eq!(value_after(&a, "--seccomp-filter"), ["/etc/rebut/fc.bpf"]);
     }
 
     #[test]

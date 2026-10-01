@@ -1,4 +1,4 @@
-//! `verifier-control`: HTTP API + worker pool in one process.
+//! `rebut-control`: HTTP API + worker pool in one process.
 //!
 //! Wires the planner, drand beacon, execution fabric and the engines
 //! (differential, challenges, mutation; formal and adversary when an
@@ -9,25 +9,23 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
-use verifier_adversary::AdversaryEngine;
-use verifier_challenges::DrandClient;
-use verifier_control::wiring::{
+use rebut_adversary::AdversaryEngine;
+use rebut_challenges::DrandClient;
+use rebut_control::wiring::{
     BaseChallenges, CheckoutDiff, CheckoutPlanner, DirSealedSpecs, DrandBeaconSource, GitCheckouts,
     GitSource,
 };
-use verifier_control::{
+use rebut_control::{
     router, run_workers, AppState, Config, ExecutorKind, GitHubForge, NoSealedSpecs, Orchestrator,
     PgQueue, PgStore, RetryPolicy, SealedSpecSource, WorkerConfig, MIGRATOR,
 };
-use verifier_core::{Engine, ExecutionRequest, ExecutionResult, Executor};
-use verifier_differential::DifferentialEngine;
-use verifier_fabric::firecracker::jailer::JailerConfig;
-use verifier_fabric::{
-    FirecrackerConfig, FirecrackerExecutor, LocalProcessExecutor, SnapshotCache,
-};
-use verifier_formal::{AnthropicInvariantProposer, FabricKaniRunner, FormalEngine};
-use verifier_mutation::MutationEngine;
-use verifier_receipts::{Ed25519Signer, InMemoryLog, RekorLog, Signer, TransparencyLog};
+use rebut_core::{Engine, ExecutionRequest, ExecutionResult, Executor};
+use rebut_differential::DifferentialEngine;
+use rebut_fabric::firecracker::jailer::JailerConfig;
+use rebut_fabric::{FirecrackerConfig, FirecrackerExecutor, LocalProcessExecutor, SnapshotCache};
+use rebut_formal::{AnthropicInvariantProposer, FabricKaniRunner, FormalEngine};
+use rebut_mutation::MutationEngine;
+use rebut_receipts::{Ed25519Signer, InMemoryLog, RekorLog, Signer, TransparencyLog};
 
 /// `EXECUTOR=none`: refuses to run anything, so every verdict is inconclusive
 /// rather than silently passing.
@@ -123,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
 
     let checkouts = GitCheckouts::new(&config.checkout_dir);
     let drand = match &config.drand_url {
-        Some(url) => DrandClient::new(url, verifier_challenges::drand::QUICKNET_CHAIN_HASH)?,
+        Some(url) => DrandClient::new(url, rebut_challenges::drand::QUICKNET_CHAIN_HASH)?,
         None => DrandClient::quicknet()?,
     };
     let sealed: Arc<dyn SealedSpecSource> = match &config.sealed_specs_dir {

@@ -1,4 +1,4 @@
-//! Receipt verification against a verifier-supplied trust policy.
+//! Receipt verification against a rebut-supplied trust policy.
 //!
 //! [`verify_envelope`] answers "did this key sign it?". A
 //! [`ReceiptPolicy`] answers "do I accept who signed it?":

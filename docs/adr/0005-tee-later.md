@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-A receipt says "this verifier ran these engines on these commits with this seed and
+A receipt says "this Rebut ran these engines on these commits with this seed and
 got this verdict". Someone has to sign it. If the orchestrator signs with a key it
 holds, then whoever runs the orchestrator (us) can sign anything. A signer inside a
 TEE (SEV-SNP, TDX, Nitro Enclaves) can attest which code produced the signature, so

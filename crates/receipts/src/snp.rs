@@ -289,7 +289,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn verifier_never_accepts_unauthenticated_reports() {
+    fn rebut_never_accepts_unauthenticated_reports() {
         let b = synthetic_report([0; 32], [0; 48], 0x30000);
         assert!(matches!(
             SevSnpVerifier.verify_report(&b),

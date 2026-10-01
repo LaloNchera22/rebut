@@ -1,6 +1,6 @@
 //! Control plane: one binary (modular monolith) that receives GitHub
 //! webhooks, queues work in Postgres (ADR-3), orchestrates engines through
-//! the core [`verifier_core::Engine`] and [`verifier_core::Executor`] traits,
+//! the core [`rebut_core::Engine`] and [`rebut_core::Executor`] traits,
 //! signs receipts (ADR-5) and publishes check runs.
 //!
 //! Wiring seams for the real components: [`orchestrator::Planner`],

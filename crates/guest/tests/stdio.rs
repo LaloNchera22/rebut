@@ -1,21 +1,19 @@
-//! Smoke test of the `verifier-guest` binary in `--stdio` mode.
+//! Smoke test of the `rebut-guest` binary in `--stdio` mode.
 
 use std::collections::BTreeMap;
 use std::process::Stdio;
 
-use verifier_core::{CommitSha, Digest, ExecutionRequest, Step};
-use verifier_guest::protocol::{
-    read_frame, write_frame, GuestMessage, HostMessage, SourceManifest,
-};
+use rebut_core::{CommitSha, Digest, ExecutionRequest, Step};
+use rebut_guest::protocol::{read_frame, write_frame, GuestMessage, HostMessage, SourceManifest};
 
 #[tokio::test]
 async fn serves_a_session_over_stdio() {
     let work = tempfile::tempdir().unwrap();
     let src = tempfile::tempdir().unwrap();
     std::fs::write(src.path().join("README"), "hi").unwrap();
-    let tgz = verifier_guest::archive::pack_directory(src.path()).unwrap();
+    let tgz = rebut_guest::archive::pack_directory(src.path()).unwrap();
 
-    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_verifier-guest"))
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_rebut-guest"))
         .arg("--stdio")
         .arg("--work-root")
         .arg(work.path())

@@ -1,7 +1,7 @@
-//! `verifier-guest`: the agent that runs inside each Firecracker microVM.
+//! `rebut-guest`: the agent that runs inside each Firecracker microVM.
 //!
 //! Layout decision: this crate owns the host/guest [`protocol`] and the step
-//! [`runner`], and has no dependency on the fabric. `verifier-fabric` depends
+//! [`runner`], and has no dependency on the fabric. `rebut-fabric` depends
 //! on this library for the protocol (host side of the session) and to run
 //! [`serve::serve_connection`] in-process for its insecure development
 //! executor. The guest binary therefore stays small and free of any

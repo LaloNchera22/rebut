@@ -1,16 +1,17 @@
 [package]
-name = "verifier-fabric"
+name = "rebut-fabric"
 description = "Execution fabric: Firecracker microVM executor, snapshot cache, host side of the guest protocol."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
 
 [dependencies]
-verifier-core.workspace = true
+rebut-core.workspace = true
 # Only the library (protocol, archive, runner); the vsock listener is
 # guest-only. A path dep because a workspace dep cannot turn defaults off.
-verifier-guest = { path = "../guest", default-features = false }
+rebut-guest = { path = "../guest", version = "0.1.0", default-features = false }
 anyhow.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true

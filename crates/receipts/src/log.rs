@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, bail, Context};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
+use rebut_core::Digest;
 use serde::{Deserialize, Serialize};
-use verifier_core::Digest;
 
 use crate::merkle::{leaf_hash, verify_inclusion, MerkleTree};
 use crate::{key_id, Envelope, Signer};

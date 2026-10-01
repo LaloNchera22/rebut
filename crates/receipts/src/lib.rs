@@ -11,7 +11,7 @@
 //!
 //! **You must trust the operator's signing key.** A receipt proves that the
 //! holder of that key attested to the verdict and that the attestation was
-//! logged; it does not prove the verifier actually ran as described.
+//! logged; it does not prove Rebut actually ran as described.
 //!
 //! # Phase 2: `tee` (partial)
 //!
@@ -73,7 +73,7 @@ pub use tee::TeeSigner;
 /// Build, sign and wrap a statement for `verdict` in one call. The statement
 /// records `signer.identity()`.
 pub async fn sign_verdict(
-    verdict: &verifier_core::Verdict,
+    verdict: &rebut_core::Verdict,
     ctx: &ReceiptContext,
     signer: &dyn Signer,
 ) -> anyhow::Result<Envelope> {

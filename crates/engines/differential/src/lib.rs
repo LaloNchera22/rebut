@@ -42,7 +42,7 @@ pub mod run;
 
 use std::collections::BTreeMap;
 
-use verifier_core::{
+use rebut_core::{
     Digest, Engine, EngineContext, EngineKind, EngineReport, ExecutionResult, Finding, FnSignature,
     Hypothesis, HypothesisSource, Reproduction, Seed, Step, Visibility,
 };
@@ -128,7 +128,7 @@ pub fn supported(sig: &FnSignature) -> Option<Vec<ArgType>> {
 pub fn case_seed(ctx: &EngineContext, path: &str) -> Seed {
     let root = ctx.seed.unwrap_or_else(|| {
         Seed(Digest::of_parts(&[
-            b"verifier/differential/v1",
+            b"rebut/differential/v1",
             ctx.pr.head_sha.as_str().as_bytes(),
         ]))
     });

@@ -1,6 +1,6 @@
-# verifier
+# rebut
 
-**verifier** checks pull requests by running them. It builds and executes the PR
+**Rebut** checks pull requests by running them. It builds and executes the PR
 (head) and its merge base (base) in throwaway Firecracker microVMs, compares their
 behavior on the same inputs, runs challenge inputs seeded from public randomness,
 and publishes a signed [in-toto](https://in-toto.io) receipt of what it did in an
@@ -20,7 +20,7 @@ a finding exists only if a concrete, recorded execution reproduces it.
 
 ```
                  ┌──────────────────────────── integration ────────────────────────────┐
-  GitHub  ──────▶│  GitHub App webhooks · check runs · CLI (verifier-cli) · MCP server │
+  GitHub  ──────▶│  GitHub App webhooks · check runs · CLI (rebut) · MCP server │
                  └──────────────────────────────┬──────────────────────────────────────┘
                                                 │ PR event (base sha, head sha, body)
                  ┌──────────────────────────────▼──────────── control ──────────────────┐
@@ -46,9 +46,9 @@ a finding exists only if a concrete, recorded execution reproduces it.
 ## How a PR flows
 
 1. **Event.** The GitHub App receives `pull_request` and enqueues a job in Postgres.
-2. **Policy and intent.** The control plane reads `.verifier/policy.toml` from the
-   **base** commit and the intent manifest (`.verifier/intent.toml` in head, or a
-   `verifier-intent` fenced block in the PR body). The intent is what the contributor
+2. **Policy and intent.** The control plane reads `.rebut/policy.toml` from the
+   **base** commit and the intent manifest (`.rebut/intent.toml` in head, or a
+   `rebut-intent` fenced block in the PR body). The intent is what the contributor
    *claims* the PR does, e.g. `refactor` means "no observable behavior changes".
 3. **Seed.** It waits for the first [drand](https://drand.love) round published after
    the push and derives `seed = H(commit_sha ‖ drand_round ‖ randomness ‖ generator_version)`.
@@ -97,7 +97,7 @@ crates/
 ├── adversary            rival agent: untrusted hypotheses → replay → findings (phase 2)
 ├── receipts             in-toto receipts, signer identity, TEE attestation, transparency log
 ├── reputation           trust graph of verified merges; BBS anonymous credentials (phase 3)
-├── cli                  `verifier` command line
+├── cli                  `rebut` command line
 └── mcp                  MCP server for agents
 policies/                example policy.toml and intent manifests
 docs/                    ADRs, threat model, council notes
@@ -117,8 +117,8 @@ docs/                    ADRs, threat model, council notes
 |---|---|
 | `Step::Mutants`, `Step::Kani` executor steps | Done in core and the guest agent. The VM rootfs must ship `cargo-mutants` and `cargo-kani` (and Kani's dependencies in the warm cargo cache). |
 | Mutation engine | Wired into the control plane with a base..head diff from the checkouts. Not yet run against a real cargo-mutants in a VM. |
-| Formal engine | Wired when `ANTHROPIC_API_KEY` is set (`VERIFIER_FORMAL_MODEL` overrides the model). Not yet run against a real cargo-kani. |
-| Rival agent | Wired when `ANTHROPIC_API_KEY` is set (`VERIFIER_ADVERSARY_MODEL`). Opt-in per repository: add `"adversary"` to `engines`. |
+| Formal engine | Wired when `ANTHROPIC_API_KEY` is set (`REBUT_FORMAL_MODEL` overrides the model). Not yet run against a real cargo-kani. |
+| Rival agent | Wired when `ANTHROPIC_API_KEY` is set (`REBUT_ADVERSARY_MODEL`). Opt-in per repository: add `"adversary"` to `engines`. |
 | Transparency log | Rekor client exists; still untested against a live Rekor. |
 | TEE signer | Receipts carry a signed `signer` identity (`operator-key` or `tee`); `TeeSigner`, attestation traits and `verify_receipt_with_policy` exist. **Only the development-only software attestation verifies.** SEV-SNP reports are parsed and policy-checked but their signature and VCEK chain are not verified yet, so SNP receipts are always rejected. The control plane still signs with the operator key. |
 
@@ -131,7 +131,7 @@ only once the measured build itself produces or checks the verdict.
 | Piece | State |
 |---|---|
 | Trust graph | Verified merges keyed by receipt digest, with merge times and reverts. Not fed by the control plane yet. |
-| Anonymous credentials | BBS blind issuance, selective disclosure, threshold-bucket predicates (`merges ≥ 1…1000`, `reverts ≤ 0…5`) and per-scope nullifiers, on zkryptium 0.7.1 ([ADR-8](docs/adr/0008-anonymous-credentials.md)). `verifier credential verify` checks a presentation. **Experimental:** zkryptium is unaudited, no service issues credentials yet, and one-credential-per-author issuance (needed for nullifiers to mean one per person) is not enforced. |
+| Anonymous credentials | BBS blind issuance, selective disclosure, threshold-bucket predicates (`merges ≥ 1…1000`, `reverts ≤ 0…5`) and per-scope nullifiers, on zkryptium 0.7.1 ([ADR-8](docs/adr/0008-anonymous-credentials.md)). `rebut credential verify` checks a presentation. **Experimental:** zkryptium is unaudited, no service issues credentials yet, and one-credential-per-author issuance (needed for nullifiers to mean one per person) is not enforced. |
 | Python repositories | Not started. |
 
 ## Quickstart
@@ -140,20 +140,20 @@ only once the measured build itself produces or checks the verdict.
 # Run the public checks on your branch against main. This builds and runs YOUR
 # code locally without a sandbox, like `cargo test`; the hosted service runs the
 # same engines in Firecracker. Mark mode: exits 0 unless --fail-on-findings.
-cargo run -p verifier-cli -- verify --base main
-cargo run -p verifier-cli -- verify --base main --offline --json
+cargo run -p rebut -- verify --base main
+cargo run -p rebut -- verify --base main --offline --json
 
 # Recompute the challenge seed for a commit and drand round.
-cargo run -p verifier-cli -- seed --help
+cargo run -p rebut -- seed --help
 
 # Regenerate the public challenges a receipt claims were run.
-cargo run -p verifier-cli -- challenges regenerate --help
+cargo run -p rebut -- challenges regenerate --help
 
 # Verify a receipt's signature and transparency-log inclusion.
-cargo run -p verifier-cli -- receipt verify --help
+cargo run -p rebut -- receipt verify --help
 
 # Check an anonymous-credential presentation for your scope and nonce.
-cargo run -p verifier-cli -- credential verify --help
+cargo run -p rebut -- credential verify --help
 ```
 
 Example output for a PR that declares `kind = "refactor"`, keeps its tests green,
@@ -177,26 +177,26 @@ DATABASE_URL=postgres://... \
 GITHUB_WEBHOOK_SECRET=... GITHUB_APP_ID=... GITHUB_PRIVATE_KEY_PATH=app.pem \
 SIGNING_KEY_PATH=receipts.key \
 EXECUTOR=firecracker FC_KERNEL=/var/lib/rebut/vmlinux FC_ROOTFS=/var/lib/rebut/rootfs.ext4 \
-cargo run -p verifier-control
+cargo run -p rebut-control
 ```
 
 `EXECUTOR` is `none` by default: nothing runs and every verdict is inconclusive,
 never a pass. `firecracker` needs bare metal with KVM (ADR-4). `insecure-local`
 runs PR code unsandboxed and is for development only. Other settings
 (`SEALED_SPECS_DIR`, `REKOR_URL`, `MAINTAINER_TOKEN`, `ANTHROPIC_API_KEY`, `FC_*`) are listed by
-`cargo run -p verifier-control -- --help`.
+`cargo run -p rebut-control -- --help`.
 
 ### MCP server for agents
 
 ```sh
-cargo build -p verifier-mcp --release
-claude mcp add verifier -- ./target/release/verifier-mcp
+cargo build -p rebut-mcp --release
+claude mcp add rebut -- ./target/release/rebut-mcp
 ```
 
 Tools: `verify_local`, `derive_seed`, `regenerate_challenges`, `verify_receipt`,
 `get_report`.
 
-Configure a repository by committing `.verifier/policy.toml` on its default branch.
+Configure a repository by committing `.rebut/policy.toml` on its default branch.
 See [`policies/`](policies/README.md).
 
 Development:

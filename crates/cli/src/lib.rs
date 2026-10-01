@@ -1,4 +1,4 @@
-//! Library behind the `verifier` command and the MCP server.
+//! Library behind the `rebut` command and the MCP server.
 //!
 //! Everything here is something a contributor or auditor can do without
 //! trusting the operator: run the public checks on their own code, recompute

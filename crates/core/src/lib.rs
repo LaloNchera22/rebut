@@ -1,4 +1,4 @@
-//! Shared vocabulary of the verifier.
+//! Shared vocabulary of the Rebut.
 //!
 //! Every other crate speaks in these types. Two rules are encoded here and
 //! nowhere else, so they cannot drift:
@@ -42,7 +42,7 @@ pub enum EngineKind {
     Challenges,
     Mutation,
     Formal,
-    /// The rival agent (`verifier-adversary`).
+    /// The rival agent (`rebut-adversary`).
     Adversary,
 }
 

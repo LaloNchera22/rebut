@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use verifier_core::{EnforcementMode, IntentManifest, Policy};
+use rebut_core::{EnforcementMode, IntentManifest, Policy};
 
 fn read(name: &str) -> String {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

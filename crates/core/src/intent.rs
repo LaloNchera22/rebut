@@ -20,8 +20,8 @@ pub enum ChangeKind {
     Unspecified,
 }
 
-/// Parsed from `.verifier/intent.toml` in the head commit, or from a fenced
-/// ```verifier-intent``` block in the PR body (the file wins).
+/// Parsed from `.rebut/intent.toml` in the head commit, or from a fenced
+/// ```rebut-intent``` block in the PR body (the file wins).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct IntentManifest {
     #[serde(default)]
@@ -39,10 +39,10 @@ impl IntentManifest {
         toml::from_str(s)
     }
 
-    /// Extract a ```verifier-intent fenced block from a PR body.
+    /// Extract a ```rebut-intent fenced block from a PR body.
     pub fn from_pr_body(body: &str) -> Option<Result<Self, toml::de::Error>> {
-        let start = body.find("```verifier-intent")?;
-        let rest = &body[start + "```verifier-intent".len()..];
+        let start = body.find("```rebut-intent")?;
+        let rest = &body[start + "```rebut-intent".len()..];
         let rest = rest
             .strip_prefix('\n')
             .or_else(|| rest.strip_prefix("\r\n"))
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn parses_body_block() {
-        let body = "Fixes overflow.\n\n```verifier-intent\nkind = \"bugfix\"\nchanges_behavior_of = [\"mylib::parse\"]\n```\n";
+        let body = "Fixes overflow.\n\n```rebut-intent\nkind = \"bugfix\"\nchanges_behavior_of = [\"mylib::parse\"]\n```\n";
         let m = IntentManifest::from_pr_body(body).unwrap().unwrap();
         assert_eq!(m.kind, ChangeKind::Bugfix);
         assert!(m.allows_behavior_change("mylib::parse"));

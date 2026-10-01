@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use verifier_core::{
+use rebut_core::{
     ChangeKind, CommitSha, ExecutionRequest, Executor, ImpactPlan, IntentManifest, Policy,
     PullRequest, RepoId, StepOutcome,
 };

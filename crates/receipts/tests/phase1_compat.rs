@@ -2,7 +2,7 @@
 //! existed) must keep verifying and decode as an operator-key receipt.
 
 use ed25519_dalek::SigningKey;
-use verifier_receipts::{
+use rebut_receipts::{
     verify_envelope, verify_receipt_with_policy, Envelope, ReceiptPolicy, SignerIdentity,
     VerifiedSigner,
 };
